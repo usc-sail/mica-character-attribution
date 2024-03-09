@@ -27,7 +27,6 @@ def save_story_tensors(_):
     os.makedirs(tensors_dir, exist_ok=True)
     data_df = pd.read_csv(data_file, index_col=None, dtype={"imdb-id": str, "content-text": str})
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, use_fast=True, add_prefix_space=True)
-    n = 10
 
     imdb_ids = []
     imdb_characters_arr = []
@@ -48,28 +47,13 @@ def save_story_tensors(_):
         segments_dfs.append(segments_df)
         mentions_dfs.append(mentions_df)
         utterances_dfs.append(utterances_df)
-        n -= 1
-        if n == 0:
-            break
-
-    # story_token_ids_arr = []
-    # mentions_mask_arr = []
-    # utterances_mask_arr = []
-    # names_mask_arr = []
-    # mention_character_ids_arr = []
-    # utterance_character_ids_arr = []
 
     for imdb_id, imdb_characters, segments_df, mentions_df, utterances_df in zip(
             imdb_ids, imdb_characters_arr, segments_dfs, mentions_dfs, utterances_dfs):
+        print(f"imdb-id = {imdb_id}")
         story_token_ids, mentions_mask, utterances_mask, names_mask, mention_character_ids, utterance_character_ids = (
             story.create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df, verbose=True))
         print()
-        # story_token_ids_arr.append(story_token_ids)
-        # mentions_mask_arr.append(mentions_mask)
-        # utterances_mask_arr.append(utterances_mask)
-        # names_mask_arr.append(names_mask)
-        # mention_character_ids_arr.append(mention_character_ids)
-        # utterance_character_ids_arr.append(utterance_character_ids)
         imdb_tensors_dir = os.path.join(tensors_dir, imdb_id)
         os.makedirs(imdb_tensors_dir, exist_ok=True)
         torch.save(story_token_ids, os.path.join(imdb_tensors_dir, "token-ids.pt"))

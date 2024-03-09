@@ -59,12 +59,15 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     segments_df["segment-order"] = segments_df["segment-id"].str.split("-").str[-1].astype(int)
     mentions_df["span-type"] = "mention"
     utterances_df["span-type"] = "utterance"
+    utterances_df["start"] = 0
     spans_df = pd.concat([mentions_df, utterances_df], axis=0)
     spans_df["imdb-character-id"] = spans_df["imdb-character"].apply(lambda ch: imdb_character_to_id[ch])
     spans_df = spans_df[spans_df["imdb-character"].isin(imdb_characters)]
     n_mentions = (spans_df["span-type"] == "mention").sum()
     n_utterances = (spans_df["span-type"] == "utterance").sum()
     segments_df = segments_df.merge(spans_df, how="left", on="segment-id")
+    segments_df.loc[segments_df["span-type"] == "utterance", "end"] = (
+        segments_df.loc[segments_df["span-type"] == "utterance", "segment-text"].str.len())
 
     # initialize text pairs
     text_pairs = []
@@ -200,12 +203,12 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
 
     # match text spans to tokenizer offsets
     for i, (j, k, start, end) in enumerate(mention_spans):
-        start_indices = torch.nonzero((offsets_mapping[j, :, 0] == start) & ~special_tokens_mask[j]
+        start_indices = torch.nonzero((offsets_mapping[j, :, 0] <= start) & ~special_tokens_mask[j]
                                        & second_sentence_mask).flatten()
-        end_indices = torch.nonzero((offsets_mapping[j, :, 1] == end) & ~special_tokens_mask[j]
+        end_indices = torch.nonzero((offsets_mapping[j, :, 1] >= end) & ~special_tokens_mask[j]
                                      & second_sentence_mask).flatten()
-        p, q = int(start_indices[0]), int(end_indices[0])
-        if (len(start_indices) == 1) and (len(end_indices) == 1) and p <= q:
+        if len(start_indices) and len(end_indices) and start_indices.max() <= end_indices.min():
+            p, q = start_indices.max(), end_indices.min()
             mention_mask[i, j * n_tokens_sequence + p: j * n_tokens_sequence + q + 1] = 1
             mention_character_ids.append(k)
         else:
@@ -213,12 +216,12 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
 
     # match text spans to tokenizer offsets
     for i, (j, k, start, end) in enumerate(utterance_spans):
-        start_indices = torch.nonzero((offsets_mapping[j, :, 0] == start) & ~special_tokens_mask[j]
+        start_indices = torch.nonzero((offsets_mapping[j, :, 0] <= start) & ~special_tokens_mask[j]
                                        & second_sentence_mask).flatten()
-        end_indices = torch.nonzero((offsets_mapping[j, :, 1] == end) & ~special_tokens_mask[j]
+        end_indices = torch.nonzero((offsets_mapping[j, :, 1] >= end) & ~special_tokens_mask[j]
                                      & second_sentence_mask).flatten()
-        p, q = int(start_indices[0]), int(end_indices[0])
-        if (len(start_indices) == 1) and (len(end_indices) == 1) and p <= q:
+        if len(start_indices) and len(end_indices) and start_indices.max() <= end_indices.min():
+            p, q = start_indices.max(), end_indices.min()
             utterance_mask[i, j * n_tokens_sequence + p: j * n_tokens_sequence + q + 1] = 1
             utterance_character_ids.append(k)
         else:
