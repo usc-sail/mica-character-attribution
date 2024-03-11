@@ -147,21 +147,22 @@ def find_character_mentions(_):
                 aliases = imdb_name_aliases[imdb_name]
                 matched_names = imdb_name_to_matched_names[imdb_name]
                 n_mentions, n_utterances = 0, 0
-                pattern = r"(^|\W)(" + r"|".join([r"(" + re.escape(matched_name) + r")" 
-                                                    for matched_name in matched_names]) + r")(\W|$)"
-                for _, row in segments_df.iterrows():
-                    segment_id, segment_speaker, segment_text = (row["segment-id"], row["segment-speaker"],
-                                                                    row["segment-text"])
-                    for match in re.finditer(pattern, segment_text):
-                        i, j = match.span(2)
-                        mention_rows.append([imdb_name, segment_id, i, j, segment_text[i: j]])
-                        n_mentions += 1
-                    if pd.notna(segment_speaker):
-                        match = re.search(pattern, segment_speaker)
-                        if match is not None:
+                if matched_names:
+                    pattern = r"(^|\W)(" + r"|".join([r"(" + re.escape(matched_name) + r")" 
+                                                        for matched_name in matched_names]) + r")(\W|$)"
+                    for _, row in segments_df.iterrows():
+                        segment_id, segment_speaker, segment_text = (row["segment-id"], row["segment-speaker"],
+                                                                        row["segment-text"])
+                        for match in re.finditer(pattern, segment_text):
                             i, j = match.span(2)
-                            utterance_rows.append([imdb_name, segment_id, i, j, segment_speaker[i: j]])
-                            n_utterances += 1
+                            mention_rows.append([imdb_name, segment_id, i, j, segment_text[i: j]])
+                            n_mentions += 1
+                        if pd.notna(segment_speaker):
+                            match = re.search(pattern, segment_speaker)
+                            if match is not None:
+                                i, j = match.span(2)
+                                utterance_rows.append([imdb_name, segment_id, i, j, segment_speaker[i: j]])
+                                n_utterances += 1
 
                 parsed_imdb_name = nameparser.HumanName(imdb_name)
                 title, first, middle, last = (parsed_imdb_name.title, parsed_imdb_name.first, parsed_imdb_name.middle,
