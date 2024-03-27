@@ -1,5 +1,5 @@
 """Create and save character tensors"""
-from dataloaders import character
+from dataloaders import tensorize
 
 import os
 import pandas as pd
@@ -61,13 +61,15 @@ def save_character_tensors(_):
         for imdb_character in imdb_characters:
             logging.info(f"{i + 1:3d}/{len(imdb_ids)}. imdb-id = {imdb_id}, character = '{imdb_character}'")
             try:
-                token_ids, mentions_mask, utterances_mask = character.create_tensors(
-                    tokenizer, imdb_character, segments_df, mentions_df, utterances_df)
+                token_ids, mentions_mask, utterances_mask, names_mask, _ = tensorize.create_tensors(
+                    tokenizer, [imdb_character], segments_df, mentions_df, utterances_df,
+                    tensorize_character_segments_only=True)
                 imdb_tensors_dir = os.path.join(tensors_dir, imdb_id, imdb_character)
                 os.makedirs(imdb_tensors_dir, exist_ok=True)
                 torch.save(token_ids, os.path.join(imdb_tensors_dir, "token-ids.pt"))
                 torch.save(mentions_mask, os.path.join(imdb_tensors_dir, "mentions-mask.pt"))
-                torch.save(utterances_mask, os.path.join(imdb_tensors_dir, "utterances-mask.pt"))
+                torch.save(utterances_mask.squeeze(), os.path.join(imdb_tensors_dir, "utterances-mask.pt"))
+                torch.save(names_mask.squeeze(), os.path.join(imdb_tensors_dir, "names-mask.pt"))
                 logging.info("done")
             except Exception as e:
                 logging.warning(str(e))
