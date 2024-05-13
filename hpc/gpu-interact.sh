@@ -1,4 +1,5 @@
 #!/bin/bash
+# v100(32)/p100(16)/a40(48)/a100(40)
 
 salloc \
 --account=shrikann_35 \
@@ -7,4 +8,4 @@ salloc \
 --ntasks=1 \
 --cpus-per-task=16 \
 --partition=gpu \
---gres=gpu:a40:1 \
+--gres=gpu:$1:1 \

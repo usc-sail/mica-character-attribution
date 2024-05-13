@@ -1,18 +1,18 @@
-"""Model to find character representations from story"""
+"""Find character representations from the name, mentions, and utterances of the character conditioned on the labels"""
 
 import torch
 from torch import nn
 from transformers import AutoModel, AutoConfig
 
-class LabelDependentStory(nn.Module):
+class LabelDependent(nn.Module):
 
     def __init__(self, pretrained_model_name, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        
+
         self.encoder = AutoModel.from_pretrained(pretrained_model_name)
         config = AutoConfig.from_pretrained(pretrained_model_name)
         hidden_size = config.hidden_size
-        self.names_weights = nn.Linear(hidden_size, 1)
+        self.name_weights = nn.Linear(hidden_size, 1)
         self.mentions_weights = nn.Linear(hidden_size, 1)
         self.combine_weights = nn.Linear(hidden_size, 1)
 
@@ -32,7 +32,7 @@ class LabelDependentStory(nn.Module):
         ======
             name_label_embeddings = [n_characters, n_labels, hidden_size]
         """
-        names_score = self.names_weights(story_embeddings).squeeze()
+        names_score = self.name_weights(story_embeddings).squeeze()
         # names_score = [n_blocks, seqlen]
 
         names_attn = torch.softmax(names_score.unsqueeze(dim=0) + names_mask.unsqueeze(dim=1), dim=2)
@@ -73,7 +73,7 @@ class LabelDependentStory(nn.Module):
         ======
             mention_label_embeddings = [n_characters, n_labels, hidden_size]
         """
-        n_labels = len(story_embeddings)
+        n_labels = len(label_embeddings)
         n_blocks, seqlen, hidden_size = story_embeddings.shape
         total_seqlen = n_blocks * seqlen
         story_embeddings = story_embeddings.reshape(total_seqlen, hidden_size)
@@ -98,7 +98,9 @@ class LabelDependentStory(nn.Module):
         # initialize mention_label_embeddings = [n_characters, n_labels, hidden_size]
 
         for i in mention_character_ids.unique():
-            character_mention_mask = mentions_mask == i
+            character_mention_mask = mention_character_ids == i
+            # [n_mentions]
+
             character_mentions_embeddings = mentions_embeddings[character_mention_mask]
             # [n_character_mentions, hidden_size]
 
@@ -129,7 +131,6 @@ class LabelDependentStory(nn.Module):
         ======
             utterance_embeddins = [n_characters, n_labels, hidden_size]
         """
-        n_labels = len(story_embeddings)
         n_blocks, seqlen, hidden_size = story_embeddings.shape
         total_seqlen = n_blocks * seqlen
         story_embeddings = story_embeddings.reshape(total_seqlen, hidden_size)
@@ -197,7 +198,7 @@ class LabelDependentStory(nn.Module):
                 mentions_mask,
                 mention_character_ids,
                 label_input_ids):
-        """Create character representations from full story and conditioned on the labels
+        """Create character representations conditioned on the labels
 
         Input
         =====
