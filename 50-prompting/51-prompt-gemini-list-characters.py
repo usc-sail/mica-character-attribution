@@ -11,9 +11,9 @@ from absl import flags
 FLAGS = flags.FLAGS
 flags.DEFINE_string("data_dir", default=None, required=True, help="data directory")
 flags.DEFINE_string("gemini_key_file", default=None, required=True, help="file containing Gemini API key")
-flags.DEFINE_string("dataset_file", default="40-modeling/dataset.csv", help="dataset csv file")
+flags.DEFINE_string("dataset_file", default="60-modeling/dataset.csv", help="dataset csv file")
 flags.DEFINE_string("movie_scripts_dir", default="movie-scripts", help="movie scripts directory")
-flags.DEFINE_string("response_file", default="50-prompting/prompt-list-characters.txt",
+flags.DEFINE_string("response_file", default="50-prompting/prompt-list-characters.csv",
                     help="output csv file where the list of characters is written")
 
 def list_characters(_):
@@ -32,7 +32,7 @@ def list_characters(_):
     imdb_ids = dataset_df["imdb-id"].unique()
     rows = []
 
-    for imdb_id in imdb_ids:
+    for i, imdb_id in enumerate(imdb_ids):
         script_file = os.path.join(movie_scripts_dir, imdb_id, "script.txt")
         script = open(script_file).read().strip()
         prompt = f"List the characters mentioned in the given movie script.\n\n{script}"
@@ -42,16 +42,17 @@ def list_characters(_):
                              HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                              HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                              HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE})
-        print(f"imdb-id = {imdb_id}")
+        print(f"{i + 1:3d}/{len(imdb_ids)}. imdb-id = {imdb_id}")
         try:
             response_text = response.text
             rows.append([imdb_id, response_text])
             print("successful!")
         except Exception:
             rows.append([imdb_id, ""])
-            print(response.prompt_feedback)
-            print(response.candidates[0].finish_reason)
-            print(response.candidates[0].safety_ratings)
+            print(f"prompt-feedback = {response.prompt_feedback}")
+            if len(response.candidates):
+                print(f"finish-reason = {response.candidates[0].finish_reason}")
+                print(f"safety-ratings = {response.candidates[0].safety_ratings}")
         print("\n\n")
         time.sleep(30)
 
