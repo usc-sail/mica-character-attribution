@@ -160,4 +160,4 @@ cython_debug/
 #.idea/
 
 *.code-workspace
-tvtropes.ipynb
+*.ipynb
