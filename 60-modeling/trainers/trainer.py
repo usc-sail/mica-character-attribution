@@ -28,7 +28,9 @@ class Trainer:
                  tokenizer_model_name,
                  label_dependent,
                  n_epochs,
-                 lr
+                 encoderlr,
+                 lr,
+                 freeze_encoder
                  ) -> None:
         self.data_dir = data_dir
         self.dataset_file = dataset_file
@@ -38,14 +40,16 @@ class Trainer:
         self.tokenizer_model_name = tokenizer_model_name
         self.label_dependent = label_dependent
         self.n_epochs = n_epochs
+        self.encoderlr = encoderlr
         self.lr = lr
+        self.freeze_encoder = freeze_encoder
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
         dataset_file = os.path.join(self.data_dir, self.dataset_file)
         tropes_file = os.path.join(self.data_dir, self.tropes_file)
         dataset_df = pd.read_csv(dataset_file, index_col=None, dtype={"imdb-id": str, "content-text": str})
         tropes_df = pd.read_csv(tropes_file, index_col="trope")
-        tensors_dir = os.path.join(self.data_dir, "30-modeling/tensors", self.data_type, self.tokenizer_model_name)
+        tensors_dir = os.path.join(self.data_dir, "60-modeling/tensors", self.data_type, self.tokenizer_model_name)
         train_df = dataset_df[dataset_df["partition"] == "train"]
         train_components = np.random.choice(train_df["component"].unique(), 10)
         train_df = train_df[train_df["component"].isin(train_components)]
@@ -57,11 +61,21 @@ class Trainer:
         else:
             model = LabelIndependent(self.pretrained_model_name)
             classifier = CompareRepresentationClassifier(model.hidden_size)
+
+        # move model to gpu
         model.cuda()
         classifier.cuda()
 
+        # freeze encoder if flag is set
+        if self.freeze_encoder:
+            for parameter in model.encoder.parameters():
+                parameter.requires_grad = False
+
         # initialize optimizer
-        optimizer = AdamW(itertools.chain(model.parameters(), classifier.parameters()), lr=self.lr)
+        parameters = [{"params": model.non_encoder_parameters}, {"params": classifier.parameters()}]
+        if not self.freeze_encoder:
+            parameters.append({"params": model.encoder_parameters, "lr": self.encoderlr})
+        optimizer = AdamW(parameters, lr=self.lr)
 
         # encode traits
         tokenizer = AutoTokenizer.from_pretrained(self.pretrained_model_name, use_fast=True, add_prefix_space=True)

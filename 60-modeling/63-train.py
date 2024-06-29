@@ -9,36 +9,40 @@ from absl import flags
 FLAGS = flags.FLAGS
 
 # input-output
-flags.DEFINE_string("data_dir", default=None, help="data directory", required=True)
-flags.DEFINE_enum("data_type", default="story", enum_values=["story", "character"],
+flags.DEFINE_string("datadir", default=None, help="data directory", required=True)
+flags.DEFINE_enum("inputtype", default="story", enum_values=["story", "character"],
                   help="encode complete story or character segments")
-flags.DEFINE_string("tokenizer_model_name", default=None,
+flags.DEFINE_string("tokenizermodel", default=None,
                     help=("tokenizer used to preprocess the data; should be a huggingface model; if not provided, it "
                           "defaults to the pretrained_model_name"))
-flags.DEFINE_string("dataset_file", default="60-modeling/dataset.csv",
+flags.DEFINE_string("datasetfile", default="60-modeling/dataset-with-only-character-tropes.csv",
                     help=("csv file containing the character, movie, and trope data; columns include imdb-id, "
                           "character, trope, component, partition, label"))
-flags.DEFINE_string("tropes_file", default="60-modeling/tropes.csv",
+flags.DEFINE_string("tropesfile", default="60-modeling/character-tropes.csv",
                     help="csv file containing trope name and definition")
 
 # model params
-flags.DEFINE_string("pretrained_model_name", default="roberta-base",
+flags.DEFINE_string("pretrainedmodel", default="roberta-base",
                     help="base encoder to use; should be a huggingface model")
-flags.DEFINE_bool("label_dependent", default=False, help="set to use label-dependent model")
-flags.DEFINE_integer("n_epochs", default=10, help="number of epochs")
-flags.DEFINE_float("lr", default=1e-4, help="learning rate")
+flags.DEFINE_bool("labeldependent", default=False, help="set to use label-dependent model")
+flags.DEFINE_integer("nepochs", default=10, help="number of epochs")
+flags.DEFINE_float("encoderlr", default=2e-5, help="learning rate of the encoder")
+flags.DEFINE_float("lr", default=1e-3, help="learning rate of modules apart from the encoder")
+flags.DEFINE_bool("freezeencoder", default=False, help="set to freeze encoder")
 
 def start_training(_):
-    tokenizer_model_name = FLAGS.tokenizer_model_name if FLAGS.tokenizer_model_name else FLAGS.pretrained_model_name
-    Trainer = trainer.Trainer(FLAGS.data_dir,
-                              FLAGS.dataset_file,
-                              FLAGS.tropes_file,
-                              FLAGS.data_type,
-                              FLAGS.pretrained_model_name,
-                              tokenizer_model_name,
-                              FLAGS.label_dependent,
-                              FLAGS.n_epochs,
-                              FLAGS.lr
+    tokenizer_model = FLAGS.tokenizermodel if FLAGS.tokenizermodel else FLAGS.pretrainedmodel
+    Trainer = trainer.Trainer(FLAGS.datadir,
+                              FLAGS.datasetfile,
+                              FLAGS.tropesfile,
+                              FLAGS.inputtype,
+                              FLAGS.pretrainedmodel,
+                              tokenizer_model,
+                              FLAGS.labeldependent,
+                              FLAGS.nepochs,
+                              FLAGS.encoderlr,
+                              FLAGS.lr,
+                              FLAGS.freezeencoder
                               )
     Trainer()
 
