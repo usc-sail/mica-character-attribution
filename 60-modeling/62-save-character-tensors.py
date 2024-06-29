@@ -14,7 +14,7 @@ from absl import logging
 FLAGS = flags.FLAGS
 flags.DEFINE_string("data_dir", default=None, help="data directory", required=True)
 flags.DEFINE_string("tokenizer", default=None, help="huggingface tokenizer name", required=True)
-flags.DEFINE_string("data_file", default="20-preprocessing/train-dev-test-splits-with-negatives.csv",
+flags.DEFINE_string("data_file", default="60-modeling/dataset-with-only-character-tropes.csv",
                     help="data file")
 flags.DEFINE_string("scripts_dir", default="movie-scripts", help="movie scripts directory")
 flags.DEFINE_string("tensors_dir", default="60-modeling/tensors/character", 

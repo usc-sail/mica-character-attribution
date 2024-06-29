@@ -40,7 +40,7 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     imdb_character_to_id = dict([(imdb_character, i) for i, imdb_character in enumerate(imdb_characters)])
 
     # create name mask
-    names_mask = torch.zeros((len(imdb_characters), tokenizer.model_max_length), dtype=float)
+    names_mask = torch.zeros((len(imdb_characters), tokenizer.model_max_length), dtype=torch.float32)
     offsets_mapping = tokenizer_output.offset_mapping
     special_tokens_mask = tokenizer_output.special_tokens_mask
     i = 0
@@ -203,8 +203,8 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     n_blocks, n_tokens_sequence = token_ids.shape
     n_tokens_story = n_blocks * n_tokens_sequence
     second_sentence_mask = torch.arange(n_tokens_sequence) >= n_tokens_first_sentence
-    mention_mask = torch.zeros((len(mention_spans), n_tokens_story), dtype=float)
-    utterance_mask = torch.zeros((len(imdb_characters), n_tokens_story), dtype=float)
+    mention_mask = torch.zeros((len(mention_spans), n_tokens_story), dtype=torch.float32)
+    utterance_mask = torch.zeros((len(imdb_characters), n_tokens_story), dtype=torch.float32)
     mention_character_ids = []
     n_mentions_not_matched, n_utterances_not_matched = 0, 0
 
