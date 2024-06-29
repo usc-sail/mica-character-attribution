@@ -10,7 +10,7 @@ class SingleRepresentationClassifier(nn.Module):
         self.ffn = nn.Linear(hidden_size, 1)
 
     def forward(self, mat):
-        return self.ffn(mat).squeeze()
+        return self.ffn(mat).squeeze(dim=-1)
 
 class CompareRepresentationClassifier(nn.Module):
 
