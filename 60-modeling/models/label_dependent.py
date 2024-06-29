@@ -16,6 +16,16 @@ class LabelDependent(nn.Module):
         self.mentions_weights = nn.Linear(self.hidden_size, 1)
         self.combine_weights = nn.Linear(self.hidden_size, 1)
 
+    @property
+    def encoder_parameters(self):
+        return self.encoder.parameters()
+
+    @property
+    def non_encoder_parameters(self):
+        for name, parameter in self.named_parameters():
+            if not name.startswith("encoder"):
+                yield parameter
+
     def name_representation(self,
                             story_embeddings,
                             label_embeddings,
@@ -32,7 +42,7 @@ class LabelDependent(nn.Module):
         ======
             name_label_embeddings = [n_characters, n_labels, hidden_size]
         """
-        names_score = self.name_weights(story_embeddings).squeeze()
+        names_score = self.name_weights(story_embeddings).squeeze(dim=2)
         # names_score = [n_blocks, seqlen]
 
         names_attn = torch.softmax(names_score.unsqueeze(dim=0) + names_mask.unsqueeze(dim=1), dim=2)
@@ -41,7 +51,7 @@ class LabelDependent(nn.Module):
         names_embeddings = torch.bmm(names_attn.permute(1, 0, 2), story_embeddings).permute(1, 0, 2)
         # names_embeddings = [n_characters, n_blocks, hidden_size]
 
-        name_label_score = (torch.bmm(names_embeddings, label_embeddings.unsqueeze(dim=0).permute(0, 2, 1))
+        name_label_score = (torch.matmul(names_embeddings, label_embeddings.unsqueeze(dim=0).permute(0, 2, 1))
                             .permute(0, 2, 1))
         # name_label_score = [n_characters, n_labels, n_blocks]
 
@@ -94,7 +104,8 @@ class LabelDependent(nn.Module):
         device = next(self.parameters()).device
         # device where model is stored
 
-        mention_label_embeddings = torch.zeros((n_characters, n_labels, hidden_size), device=device, dtype=float)
+        mention_label_embeddings = torch.zeros((n_characters, n_labels, hidden_size), device=device,
+                                               dtype=torch.float32)
         # initialize mention_label_embeddings = [n_characters, n_labels, hidden_size]
 
         for i in mention_character_ids.unique():
@@ -173,7 +184,7 @@ class LabelDependent(nn.Module):
                       .reshape(n_characters, n_labels, 3, hidden_size))
         # embeddings = [n_characters, n_labels, 3, hidden_size]
 
-        score = self.combine_weights(embeddings).squeeze()
+        score = self.combine_weights(embeddings).squeeze(dim=3)
         # score = [n_characters, n_labels, 3]
 
         mask = torch.zeros((n_characters, 3), device=device)
@@ -186,7 +197,7 @@ class LabelDependent(nn.Module):
         attn = torch.softmax(score + mask.unsqueeze(dim=1), dim=2)
         # attn = [n_characters, n_labels, 3]
 
-        character_embeddings = torch.matmul(attn.unsqueeze(dim=2), embeddings).squeeze()
+        character_embeddings = torch.matmul(attn.unsqueeze(dim=2), embeddings).squeeze(dim=2)
         # character_embeddings = [n_characters, n_labels, hidden_size]
 
         return character_embeddings
@@ -233,7 +244,8 @@ class LabelDependent(nn.Module):
         # utterance_label_embeddings = [n_characters, n_labels, hidden_size]
 
         character_embeddings = self.combine_embeddings(name_label_embeddings, mention_label_embeddins,
-                                                       utterance_label_embeddings)
+                                                       utterance_label_embeddings, mention_character_ids,
+                                                       utterances_mask)
         # character_embeddings = [n_characters, n_labels, hidden_size]
 
         return character_embeddings
