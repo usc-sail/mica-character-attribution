@@ -66,8 +66,8 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     utterances_df["span-type"] = "utterance"
     utterances_df["start"] = 0
     spans_df = pd.concat([mentions_df, utterances_df], axis=0)
-    spans_df["imdb-character-id"] = spans_df["imdb-character"].apply(lambda ch: imdb_character_to_id[ch])
     spans_df = spans_df[spans_df["imdb-character"].isin(imdb_characters)]
+    spans_df["imdb-character-id"] = spans_df["imdb-character"].apply(lambda ch: imdb_character_to_id[ch])
     n_mentions = (spans_df["span-type"] == "mention").sum()
     n_utterances = (spans_df["span-type"] == "utterance").sum()
     merge_strategy = "inner" if tensorize_character_segments_only else "left"
