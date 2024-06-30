@@ -3,7 +3,7 @@
 from models.label_dependent import LabelDependent
 from models.label_independent import LabelIndependent
 from models.classifier import SingleRepresentationClassifier, CompareRepresentationClassifier
-from trainers import story_label_dependent_trainer
+from trainers import story_label_dependent_trainer, character_label_dependent_trainer
 
 import os
 import tqdm
@@ -30,7 +30,8 @@ class Trainer:
                  n_epochs,
                  encoderlr,
                  lr,
-                 freeze_encoder
+                 freeze_encoder,
+                 ncharacters_batch
                  ) -> None:
         self.data_dir = data_dir
         self.dataset_file = dataset_file
@@ -43,6 +44,7 @@ class Trainer:
         self.encoderlr = encoderlr
         self.lr = lr
         self.freeze_encoder = freeze_encoder
+        self.ncharacters_batch = ncharacters_batch
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
         dataset_file = os.path.join(self.data_dir, self.dataset_file)
@@ -51,8 +53,6 @@ class Trainer:
         tropes_df = pd.read_csv(tropes_file, index_col="trope")
         tensors_dir = os.path.join(self.data_dir, "60-modeling/tensors", self.data_type, self.tokenizer_model_name)
         train_df = dataset_df[dataset_df["partition"] == "train"]
-        train_components = np.random.choice(train_df["component"].unique(), 10)
-        train_df = train_df[train_df["component"].isin(train_components)]
 
         # initialize model
         if self.label_dependent:
@@ -85,6 +85,14 @@ class Trainer:
                            .input_ids).cuda()
 
         # train model
-        if self.label_dependent and self.data_type == "story":
-            story_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
-                                                tensors_dir, self.n_epochs)
+        if self.label_dependent:
+            if self.data_type == "story":
+                train_components = np.random.choice(train_df["component"].unique(), 10)
+                train_df = train_df[train_df["component"].isin(train_components)]
+                story_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
+                                                    tensors_dir, self.n_epochs)
+            else:
+                train_characters = np.random.choice(train_df["character"].unique(), 53)
+                train_df = train_df[train_df["character"].isin(train_characters)]
+                character_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
+                                                        tensors_dir, self.n_epochs, self.ncharacters_batch)
