@@ -29,6 +29,8 @@ flags.DEFINE_integer("nepochs", default=10, help="number of epochs")
 flags.DEFINE_float("encoderlr", default=2e-5, help="learning rate of the encoder")
 flags.DEFINE_float("lr", default=1e-3, help="learning rate of modules apart from the encoder")
 flags.DEFINE_bool("freezeencoder", default=False, help="set to freeze encoder")
+flags.DEFINE_integer("ncharactersbatch", default=5, help=("number of characters per batch when training with "
+                                                          "data type = character"))
 
 def start_training(_):
     tokenizer_model = FLAGS.tokenizermodel if FLAGS.tokenizermodel else FLAGS.pretrainedmodel
@@ -42,7 +44,8 @@ def start_training(_):
                               FLAGS.nepochs,
                               FLAGS.encoderlr,
                               FLAGS.lr,
-                              FLAGS.freezeencoder
+                              FLAGS.freezeencoder,
+                              FLAGS.ncharactersbatch
                               )
     Trainer()
 
