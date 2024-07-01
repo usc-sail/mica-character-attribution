@@ -3,16 +3,11 @@ separate character and trait embedding matrices
 """
 from torch import nn
 
-class SingleRepresentationClassifier(nn.Module):
+class PortayClassifier(nn.Module):
 
-    def __init__(self, hidden_size, *args, **kwargs) -> None:
+    def __init__(self, input_size, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.ffn = nn.Linear(hidden_size, 1)
+        self.ffn = nn.Linear(input_size, 1)
 
     def forward(self, mat):
         return self.ffn(mat).squeeze(dim=-1)
-
-class CompareRepresentationClassifier(nn.Module):
-
-    def __init__(self, hidden_size, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
