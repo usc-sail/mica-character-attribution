@@ -2,8 +2,9 @@
 
 from models.label_dependent import LabelDependent
 from models.label_independent import LabelIndependent
-from models.classifier import SingleRepresentationClassifier, CompareRepresentationClassifier
+from models.classifier import PortayClassifier
 from trainers import story_label_dependent_trainer, character_label_dependent_trainer
+from trainers import story_label_independent_trainer, character_label_independent_trainer
 
 import os
 import tqdm
@@ -53,14 +54,16 @@ class Trainer:
         tropes_df = pd.read_csv(tropes_file, index_col="trope")
         tensors_dir = os.path.join(self.data_dir, "60-modeling/tensors", self.data_type, self.tokenizer_model_name)
         train_df = dataset_df[dataset_df["partition"] == "train"]
+        valid_df = dataset_df[dataset_df["partition"] == "valid"]
+        test_df = dataset_df[dataset_df["partition"] == "test"]
 
         # initialize model
         if self.label_dependent:
             model = LabelDependent(self.pretrained_model_name)
-            classifier = SingleRepresentationClassifier(model.hidden_size)
+            classifier = PortayClassifier(model.hidden_size)
         else:
             model = LabelIndependent(self.pretrained_model_name)
-            classifier = CompareRepresentationClassifier(model.hidden_size)
+            classifier = PortayClassifier(2 * model.hidden_size)
 
         # move model to gpu
         model.cuda()
@@ -85,14 +88,22 @@ class Trainer:
                            .input_ids).cuda()
 
         # train model
-        if self.label_dependent:
-            if self.data_type == "story":
-                train_components = np.random.choice(train_df["component"].unique(), 10)
-                train_df = train_df[train_df["component"].isin(train_components)]
+        if self.data_type == "story":
+            train_components = np.random.choice(train_df["component"].unique(), 10)
+            train_df = train_df[train_df["component"].isin(train_components)]
+            if self.label_dependent:
                 story_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
                                                     tensors_dir, self.n_epochs)
             else:
-                train_characters = np.random.choice(train_df["character"].unique(), 53)
-                train_df = train_df[train_df["character"].isin(train_characters)]
+                story_label_independent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
+                                                      tensors_dir, self.n_epochs)
+        else:
+            train_characters = np.random.choice(train_df["character"].unique(), 53)
+            train_df = train_df[train_df["character"].isin(train_characters)]
+            if self.label_dependent:
                 character_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
                                                         tensors_dir, self.n_epochs, self.ncharacters_batch)
+            else:
+                character_label_independent_trainer.train(model, classifier, optimizer, train_df, tropes,
+                                                          trope_token_ids, tensors_dir, self.n_epochs,
+                                                          self.ncharacters_batch)
