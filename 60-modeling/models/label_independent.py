@@ -19,6 +19,16 @@ class LabelIndependent(nn.Module):
         self.utterance_weights = nn.Linear(self.hidden_size, 1)
         self.combine_weights = nn.Linear(self.hidden_size, 1)
 
+    @property
+    def encoder_parameters(self):
+        return self.encoder.parameters()
+
+    @property
+    def non_encoder_parameters(self):
+        for name, parameter in self.named_parameters():
+            if not name.startswith("encoder"):
+                yield parameter
+
     def name_representation(self,
                             story_embeddings,
                             names_mask):
@@ -42,13 +52,13 @@ class LabelIndependent(nn.Module):
         names_embeddings = torch.bmm(names_token_attn.permute(1, 0, 2), story_embeddings).permute(1, 0, 2)
         # names_embeddings = [n_characters, n_blocks, hidden_size]
 
-        names_score = self.name_weights(names_embeddings).squeeze()
+        names_score = self.name_weights(names_embeddings).squeeze(dim=2)
         # names_score = [n_characters, n_blocks]
 
         names_attn = torch.softmax(names_score, dim=1)
         # names_attn = [n_characters, n_blocks]
 
-        names_character_embeddings = torch.bmm(names_attn.unsqueeze(dim=1), names_embeddings).squeeze()
+        names_character_embeddings = torch.bmm(names_attn.unsqueeze(dim=1), names_embeddings).squeeze(dim=1)
         # names_character_embeddings = [n_characters, hidden_size]
 
         return names_character_embeddings
@@ -91,7 +101,7 @@ class LabelIndependent(nn.Module):
         device = next(self.parameters()).device
         # device where model is stored
 
-        mentions_character_embeddings = torch.zeros((n_characters, hidden_size), device=device, dtype=float)
+        mentions_character_embeddings = torch.zeros((n_characters, hidden_size), device=device, dtype=torch.float32)
         # initialize mentions_embeddings = [n_characters, hidden_size]
 
         for i in mention_character_ids.unique():
@@ -108,7 +118,7 @@ class LabelIndependent(nn.Module):
             # character_mentions_attn = [1, n_character_mentions]
 
             mentions_character_embeddings[i] = torch.mm(character_mentions_attn,
-                                                        character_mentions_embeddings).squeeze()
+                                                        character_mentions_embeddings).squeeze(dim=0)
             # mentions_character_embeddings[i] = [hidden_size]
 
         return mentions_character_embeddings
@@ -169,7 +179,7 @@ class LabelIndependent(nn.Module):
                       .reshape(n_characters, 3, hidden_size))
         # embeddings = [n_characters, 3, hidden_size]
 
-        score = self.combine_weights(embeddings).squeeze()
+        score = self.combine_weights(embeddings).squeeze(dim=2)
         # score = [n_characters, 3]
 
         mask = torch.zeros((n_characters, 3), device=device)
@@ -182,7 +192,7 @@ class LabelIndependent(nn.Module):
         attn = torch.softmax(score + mask, dim=1)
         # attn = [n_characters, 3]
 
-        character_embeddings = torch.bmm(attn.unsqueeze(dim=1), embeddings).squeeze()
+        character_embeddings = torch.bmm(attn.unsqueeze(dim=1), embeddings).squeeze(dim=1)
         # character_embeddings = [n_characters, hidden_size]
 
         return character_embeddings
@@ -223,7 +233,8 @@ class LabelIndependent(nn.Module):
         utterance_embeddings = self.utterance_representation(story_embeddings, utterances_mask)
         # utterance_embeddings = [n_characters, hidden_size]
 
-        character_embeddings = self.combine_embeddings(name_embeddings, mention_embeddins, utterance_embeddings)
+        character_embeddings = self.combine_embeddings(name_embeddings, mention_embeddins, utterance_embeddings,
+                                                       mention_character_ids, utterances_mask)
         # character_embeddings = [n_characters, hidden_size]
 
         return character_embeddings
