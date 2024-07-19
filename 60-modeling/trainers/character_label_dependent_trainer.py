@@ -103,11 +103,11 @@ def train(model, classifier, optimizer, df, tropes, trope_token_ids, tensors_dir
 
                     # run model
                     movie_character_embeddings = model(token_ids,
-                                                    names_mask,
-                                                    utterances_mask,
-                                                    mentions_mask,
-                                                    mention_character_ids,
-                                                    character_trope_token_ids)
+                                                       names_mask,
+                                                       utterances_mask,
+                                                       mentions_mask,
+                                                       mention_character_ids,
+                                                       character_trope_token_ids)
 
                     # save the embeddings
                     character_embeddings_arr.append(movie_character_embeddings)
