@@ -54,7 +54,7 @@ class Trainer:
         tropes_df = pd.read_csv(tropes_file, index_col="trope")
         tensors_dir = os.path.join(self.data_dir, "60-modeling/tensors", self.data_type, self.tokenizer_model_name)
         train_df = dataset_df[dataset_df["partition"] == "train"]
-        valid_df = dataset_df[dataset_df["partition"] == "valid"]
+        valid_df = dataset_df[dataset_df["partition"] == "dev"]
         test_df = dataset_df[dataset_df["partition"] == "test"]
 
         # initialize model
@@ -91,15 +91,19 @@ class Trainer:
         if self.data_type == "story":
             train_components = np.random.choice(train_df["component"].unique(), 10)
             train_df = train_df[train_df["component"].isin(train_components)]
+            valid_components = np.random.choice(valid_df["component"].unique(), 5)
+            valid_df = valid_df[valid_df["component"].isin(valid_components)]
             if self.label_dependent:
-                story_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
-                                                    tensors_dir, self.n_epochs)
+                story_label_dependent_trainer.train(model, classifier, optimizer, train_df, valid_df, tropes,
+                                                    trope_token_ids, tensors_dir, self.n_epochs)
             else:
-                story_label_independent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
-                                                      tensors_dir, self.n_epochs)
+                story_label_independent_trainer.train(model, classifier, optimizer, train_df, valid_df, tropes,
+                                                      trope_token_ids, tensors_dir, self.n_epochs)
         else:
             train_characters = np.random.choice(train_df["character"].unique(), 53)
             train_df = train_df[train_df["character"].isin(train_characters)]
+            valid_characters = np.random.choice(valid_df["character"].unique(), 10)
+            valid_df = valid_df[valid_df["character"].isin(valid_characters)]
             if self.label_dependent:
                 character_label_dependent_trainer.train(model, classifier, optimizer, train_df, tropes, trope_token_ids,
                                                         tensors_dir, self.n_epochs, self.ncharacters_batch)
