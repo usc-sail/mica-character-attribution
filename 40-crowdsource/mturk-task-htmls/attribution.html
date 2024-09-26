@@ -1,0 +1,242 @@
+<!-- For help on using this template, see the blog post: 
+ https://blog.mturk.com/editing-the-survey-link-project-template-in-the-ui-7c75285105fb#.py7towsdx -->
+<!-- HIT template: SurveyLink-v3.0 -->
+<!-- The following snippet enables the 'responsive' behavior on smaller screens -->
+<meta content="width=device-width,initial-scale=1" name="viewport" />
+<section class="container" id="SurveyLink">
+    <!-- Instructions -->
+    <div class="row">
+    <div class="col-xs-12 col-md-12">
+    <div class="panel panel-primary">
+        <!-- WARNING: the ids "collapseTrigger" and "instructionBody" are being used to 
+         enable expand/collapse feature -->
+        <a class="panel-heading" href="javascript:void(0);" id="collapseTrigger">
+            <strong>Instructions</strong> <span class="collapse-text">(Click to expand)</span> 
+        </a>
+        <div class="panel-body" id="instructionBody" style="font-size: medium;">
+        <h3>Instructions</h3>
+        <p>
+            A trope is a storytelling device or convention the storyteller uses to describe situations the audience can 
+            easily recognize, often used to stereotype characters. Think of them as character attributes.
+        </p>
+        <p>
+            Your task is as follows:
+        </p>
+        <ol>
+            <li>
+                Identify the movie character from the pictures and the given movie(s). If you are having trouble
+                recognizing the character, click on the Character Page link(s).
+            </li>
+            <li>
+                Read the definition of the character trope. You can open the link to know more.
+            </li>
+            <li>
+                Choose yes, maybe yes, not sure, maybe no, or no to answer whether the character portrays or is 
+                associated with the trope.
+            </li>
+            <li>
+                (Optional) Explain your choice in the provided text area or leave any other comment behind.
+            </li>
+        </ol>
+        <p>
+            You can read about the character online in sites such as
+            <a href="https://www.wikipedia.org/" target="_blank">Wikipedia</a> or
+            <a href="https://www.fandom.com/" target="_blank">Fandom Wikis</a>.
+            We provide the links to the Wikipedia movie page and the character fandom page whenever possible.
+            Creating an account at the <a href="https://www.fandom.com/" target="_blank">Fandom</a> website can reduce
+            the advertisements you see when visiting a Fandom page.
+        </p>
+        <p>
+            We strongly discourage the use of Large Language Models such as Gemini, Claude, and ChatGPT to answer the
+            questions. These models can hallucinate and you must check the veracity of their responses.
+        </p>
+        <p>
+            Do not speed through the HITs and take sufficient time to understand the character and the trope before
+            answering. The HITs contain test questions that look identical to regular questions. We will disqualify
+            workers who perform poorly on these test questions or if they spam their answers.
+        </p>
+        <p>
+            Do not hoard too many HITs to yourself. We recommend accepting not more than 50 HITs so that all qualified
+            workers can get the chance to work.
+        </p>
+        <hr style="height:1px;border-width:0;background-color:rgba(128, 128, 128, 0.588)">
+        <h3>Movies</h3>
+        <p>
+            For this HIT Group, we have selected characters from the following movies: 
+            <ol>
+                <li>Lady Bird (2017)</li>
+                <li>Monsters University (2013)</li>
+                <li>Boyhood (2014)</li>
+                <li>Pride (2014)</li>
+                <li>Inception (2010)</li>
+                <li>Toy Story 3 (2010)</li>
+                <li>Dune (2021)</li>
+                <li>Whiplash (2014)</li>
+                <li>West Side Story (2021)</li>
+                <li>Kubo and the Two Strings (2016)</li>
+                <li>Toy Story 4 (2019)</li>
+                <li>Prisoners (2013)</li>
+            </ol>
+        </p>
+        <hr style="height:1px;border-width:0;background-color:rgba(128, 128, 128, 0.588)">
+        <h3>Slack Invite</h3>
+        <p>
+            We invite you to join the Slack Workspace Turker Nation.
+            Use the link <a 
+            href="https://join.slack.com/t/turkernation/shared_invite/zt-2p4ze9u68-2l5Itw25~aV~p484qD2w3Q" 
+            target="_blank">
+            https://join.slack.com/t/turkernation/shared_invite/zt-2p4ze9u68-2l5Itw25~aV~p484qD2w3Q</a>.
+            After you have joined, please send a message to Sabyasachee Baruah with your WorkerID.
+            Do not spam the #general channel.
+            We will add you to a private channel where we can discuss any questions.
+        </p>
+        <p style="font-size: smaller;">
+            Please reach out to <a href="mailto:sailusc.mturk@gmail.com">sailusc.mturk@gmail.com</a> for any questions.
+        </p>
+</div>
+</div>
+</div>
+</div>
+<!-- End Instructions --><!-- Survey Link Layout -->
+
+<div class="row" id="workContent">
+<div>
+    <!-- Content for Worker -->
+	<p>
+        <img src="${picture-1}" style="max-width: 33%; max-height: 250px" alt="character image 1"/>
+        <img src="${picture-2}" style="max-width: 33%; max-height: 250px" alt="character image 2"/>
+        <img src="${picture-3}" style="max-width: 33%; max-height: 250px" alt="character image 3"/>
+    </p>
+    
+    <p style="font-size: large;">
+        ${character-introduction} ${name} might appear in other movies not listed here. The above pictures might not always show ${name}.
+    </p>
+
+    <p style="font-size: large;">
+        Wikipedia movie page(s): ${wikipedia-urls}
+    </p>
+
+    <p style="font-size: large;">
+        Character fandom page: <a href="${fandom-url}" target="_blank" id="fandom">${name}</a>
+    </p>
+    
+    <p style="font-size: large;">
+        <strong>${trope}</strong> is an example of a trope. 
+        ${summary} Go to <a href="${trope-url}" target="_blank" id="tvtrope">TV-Tropes</a> to learn more about it.
+    </p>
+    
+    <br><br>
+
+    <h3>Does <span style="color: red;">'${name}'</span> portray or is associated with the
+        <span style="color: blue;">${trope}</span> trope?</h3>
+
+    <div>
+        <input type="radio" id="portrayyes" name="portray" value="yes" required>
+        <label for="portrayyes">Yes</label>
+    </div>
+    <div>
+        <input type="radio" id="portraymaybeyes" name="portray" value="maybeyes">
+        <label for="portraymaybeyes">Maybe Yes</label>
+    </div>
+    <div>
+        <input type="radio" id="portraynotsure" name="portray" value="notsure">
+        <label for="portraynotsure">Not Sure</label>
+    </div>
+    <div>
+        <input type="radio" id="portraymaybeno" name="portray" value="maybeno">
+        <label for="portraymaybeno">Maybe No</label>
+    </div>
+    <div>
+        <input type="radio" id="portrayno" name="portray" value="no">
+        <label for="portrayno">No</label>
+    </div>
+
+    <br>
+
+    <h4>
+        Comments (Optional):
+    </h4>
+    <div>
+        <textarea name="comments" placeholder="Enter justification for your answer or any other comments"
+        rows="4" cols="100"></textarea>
+    </div>
+
+    <div>
+        <input type="radio" id="clickedWikipedia" name="clickedWikipedia" value="clicked" hidden>
+        <input type="radio" id="clickedFandom" name="clickedFandom" value="clicked" hidden>
+        <input type="radio" id="clickedTVTrope" name="clickedTVTrope" value="clicked" hidden>
+    </div>
+    <!-- End input from Worker -->
+</div>
+</div>
+
+<!-- End Survey Link Layout -->
+</section>
+
+
+<!-- Please note that Bootstrap CSS/JS and JQuery are 3rd party libraries that may update their url/code at any time. 
+ Amazon Mechanical Turk (MTurk) is including these libraries as a default option for you, but is not responsible for 
+ any changes to the external libraries --><!-- External CSS references -->
+<link crossorigin="anonymous" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" 
+integrity="sha384-IS73LIqjtYesmURkDE9MXKbXqYA8rvKEp/ghicjem7Vc3mGRdQRptJSz60tvrB6+" rel="stylesheet" />
+<!-- Open internal style sheet -->
+<style type="text/css">
+
+#collapseTrigger{
+  color:#fff;
+  display: block;
+  text-decoration: none;
+}
+#submitButton{
+  white-space: normal;
+}
+.image{
+  margin-bottom: 10px; 
+}
+
+/* CSS for breaking long words/urls */
+.dont-break-out {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  -ms-word-break: break-all;
+  word-break: break-all;
+  word-break: break-word;
+  -ms-hyphens: auto;
+  -moz-hyphens: auto;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+}
+</style>
+<!-- Close internal style sheet -->
+<!-- External JS references -->
+<script src="https://code.jquery.com/jquery-3.1.0.min.js" 
+integrity="sha256-cCueBR6CsyA4/9szpPfrX3s49M9vUU5BgtiJj06wt/s=" 
+crossorigin="anonymous">
+</script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js" 
+integrity="sha384-s1ITto93iSMDxlp/79qhWHi+LsIi9Gx6yL+cOKDuymvihkfol83TYbLbOw+W/wv4" crossorigin="anonymous">
+</script>
+
+<!-- Open internal javascript -->
+<script>
+	$(document).ready(function() {
+	// Instructions expand/collapse
+	var content = $('#instructionBody');
+	var trigger = $('#collapseTrigger');
+	content.hide();
+	$('.collapse-text').text('(Click to expand)');
+	trigger.click(function(){
+		content.toggle();
+		var isVisible = content.is(':visible');
+		if(isVisible){
+		$('.collapse-text').text('(Click to collapse)');
+		}else{
+		$('.collapse-text').text('(Click to expand)');
+		}
+	});
+    $("#wikipedia").click(function() {$("#clickedWikipedia").prop("checked", true).click();});
+    $("#fandom").click(function() {$("#clickedFandom").prop("checked", true).click();});
+    $("#tvtrope").click(function() {$("#clickedTVTrope").prop("checked", true).click();});
+	// end expand/collapse
+	});
+</script><!-- Close internal javascript -->

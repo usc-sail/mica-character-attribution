@@ -1,0 +1,342 @@
+<!-- For help on using this template, see the blog post: 
+ https://blog.mturk.com/editing-the-survey-link-project-template-in-the-ui-7c75285105fb#.py7towsdx -->
+<!-- HIT template: SurveyLink-v3.0 -->
+<!-- The following snippet enables the 'responsive' behavior on smaller screens -->
+<meta content="width=device-width,initial-scale=1" name="viewport" />
+<section class="container" id="SurveyLink">
+<!-- Instructions -->
+<div class="row">
+<div class="col-xs-12 col-md-12">
+<div class="panel panel-primary">
+    <!-- WARNING: the ids "collapseTrigger" and "instructionBody" are being used to 
+        enable expand/collapse feature -->
+    <a class="panel-heading" href="javascript:void(0);" id="collapseTrigger">
+        <strong>Instructions</strong> <span class="collapse-text">(Click to expand)</span> 
+    </a>
+    <div class="panel-body" id="instructionBody">
+        <div style="font-family: Lato, sans-serif; font-size: 18px;">
+            <p>
+                This is a retest to qualify workers who expressed interest in the task.
+                There is no movie survey.
+                You only have to answer <strong>five</strong> questions about movie characters.
+                The instructions stay the same and are repeated here.
+            </p>
+            <hr style="height:1px;border-width:0;background-color:rgba(128, 128, 128, 0.588)">
+            <h3>Instructions</h3>
+            <p>
+                A <strong>trope</strong> is a storytelling device or convention the storyteller uses to describe
+                situations the audience can easily recognize.
+                Think of them as character attributes.
+            </p>
+            <p>
+                For each of the five questions, observe the character shown and the definition of the trope.
+                You can click on the character page link if you are not able to identify the character from their name
+                and the pictures. 
+                Then choose <strong>yes/no</strong> to answer whether the character portrays the trope.
+                If you are not familiar with the character, please consult online sites like
+                <a href="https://www.wikipedia.org/">Wikipedia</a> and
+                <a href="https://www.fandom.com/">Fandom Wikis</a>, read about the character and then answer.
+            </p>
+            <p>
+                Based upon your answers, you would be qualified to perform a question-answering task about movie 
+                characters.
+                It will have a similar format as that of the five questions in this task.
+            </p>
+            <hr style="height:1px;border-width:0;background-color:rgba(128, 128, 128, 0.588)">
+            <h3>Slack Invite</h3>
+            <p>
+                You should have also received a bonus of $0.25 for your performance in the previous qualification task.
+                We invite you to join the Slack Workspace Turker Nation.
+                Use the link <a href="https://join.slack.com/t/turkernation/shared_invite/zt-2p4ze9u68-2l5Itw25~aV~p484qD2w3Q" target="_blank">https://join.slack.com/t/turkernation/shared_invite/zt-2p4ze9u68-2l5Itw25~aV~p484qD2w3Q</a>.
+                After you have joined, please send a message to Sabyasachee Baruah with your WorkerID.
+                Do not spam the #general channel.
+                We will add you to a private channel where we can discuss any questions.
+            </p>
+            <p style="font-size: smaller;">
+                Please reach out to <a href="mailto:sailusc.mturk@gmail.com">sailusc.mturk@gmail.com</a> for any
+                questions.
+            </p>
+        </div>
+    </div>
+</div>
+</div>
+</div>
+<!-- End Instructions --><!-- Survey Link Layout -->
+
+<div class="row" id="workContent">
+<div>
+    <div>
+        <h1>Question 1</h1>
+        <p>
+            <img 
+            src="https://m.media-amazon.com/images/M/MV5BOTcyMjMyMjI1MF5BMl5BanBnXkFtZTgwNTY0MzQ4MDE@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 1"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BMTU2NTEyNTA3NV5BMl5BanBnXkFtZTgwNTUyOTg2MDE@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 2"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BMTY5NzU3OTg4NV5BMl5BanBnXkFtZTgwMTc0MzQ4MDE@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 3"/>
+        </p>
+        
+        <p style="font-size: large;">
+            <strong>Jordan Belfort</strong> is a character that appears in the movie 
+            <a href="https://www.imdb.com/title/tt0993846/" target="_blank"><i>The Wolf of Wall Street</i></a> 
+            (<a href="https://www.imdb.com/title/tt0993846/characters/nm0000138" target="_blank">Character Page</a>).
+        </p>
+        
+        <p style="font-size: large;">
+            The <strong>RousingSpeech</strong> trope occurs when a hero, in a moment of dire circumstances, 
+            delivers an inspiring speech to turn hopelessness into proactive action, 
+            often accompanied by stirring music and followed by a renewed sense of determination among the characters.
+            Go to
+            <a href="https://tvtropes.org/pmwiki/pmwiki.php/Main/RousingSpeech" target="_blank">RousingSpeech</a> 
+            to learn more about it.
+        </p>
+        
+        <h3>
+            Does <span style="color:rgb(255, 47, 0)">Jordan Belfort</span> portray or is associated with the 
+            <span style="color: rgb(0, 106, 255);">RousingSpeech</span> trope?
+        </h3>
+
+        <div>
+            <input type="radio" id="portrayyes1" name="portray1" value="yes" required>
+            <label for="portrayyes1">Yes</label>
+        </div>
+        <div>
+            <input type="radio" id="portrayno1" name="portray1" value="no">
+            <label for="portrayno1">No</label>
+        </div>
+    </div>
+    <br>
+    <div>
+        <h1>Question 2</h1>
+        <p>
+            <img 
+            src="https://m.media-amazon.com/images/M/MV5BM2YwY2JkYmItZWJlZi00OTk4LTgxOGUtNmJlN2I1ZDAxNTEzXkEyXkFqcGdeQXVyOTc5MDI5NjE@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 1"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BMTg4NTc3MDU0NF5BMl5BanBnXkFtZTgwNTUyNTQ5MjI@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 2"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BMzM1MjI2YTgtZTAzZi00ZmZjLTlmOWEtODgwYWYyNDE0NWY0XkEyXkFqcGdeQXVyNDQxNjcxNQ@@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 3"/>
+        </p>
+        
+        <p style="font-size: large;">
+            <strong>M'Baku</strong> is a character that appears in the movies: 
+            <a href="https://www.imdb.com/title/tt1825683/" target="_blank"><i>Black Panther</i></a> 
+            (<a href="https://www.imdb.com/title/tt1825683/characters/nm6328300" target="_blank">Character Page</a>)
+            and 
+            <a href="https://www.imdb.com/title/tt9114286/" target="_blank"><i>Black Panther: Wakanda Forever</i></a>
+            (<a href="https://www.imdb.com/title/tt9114286/characters/nm6328300" target="_blank">Character Page</a>).
+        </p>
+        
+        <p style="font-size: large;">
+            The <strong>LowerClassLout</strong> trope represents coarse, vulgar, and often violent individuals from the
+            lower social classes, frequently depicted as delinquents or troublemakers.
+            They embody negative stereotypes of the working or middle class and can appear as lone figures or in gangs,
+            often causing trouble for others in various media.
+            Go to
+            <a href="https://tvtropes.org/pmwiki/pmwiki.php/Main/LowerClassLout" target="_blank">LowerClassLout</a>
+            to learn more about it.
+        </p>
+        
+        <h3>
+            Does <span style="color:rgb(255, 47, 0)">M'Baku</span> portray or is associated with the 
+            <span style="color: rgb(0, 106, 255);">LowerClassLout</span> trope?
+        </h3>
+
+        <div>
+            <input type="radio" id="portrayyes2" name="portray2" value="yes" required>
+            <label for="portrayyes2">Yes</label>
+        </div>
+        <div>
+            <input type="radio" id="portrayno2" name="portray2" value="no">
+            <label for="portrayno2">No</label>
+        </div>
+    </div>
+    <br>
+    <div>
+        <h1>Question 3</h1>
+        <p>
+            <img 
+            src="https://m.media-amazon.com/images/M/MV5BMzU0OTU3NTgtNTQyNi00NTc5LWJmZmMtNzczOWVlNTU3OWRkXkEyXkFqcGdeQXVyODc5MTI0NjU@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 1"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BNjUzNzc3NjQ4OF5BMl5BanBnXkFtZTgwNzgyODI4NjM@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 2"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BNWY3MmYxZjMtOWNlZC00YmM2LWFhMzItNzMxYzkwZmI3ODdlXkEyXkFqcGdeQXVyODc5MTI0NjU@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 3"/>
+        </p>
+        
+        <p style="font-size: large;">
+            <strong>Peter B. Parker</strong> is a character that appears in the movie 
+            <a href="https://www.imdb.com/title/tt4633694/" target="_blank"><i>Spider-Man: Into the Spider-Verse</i></a> 
+            (<a href="https://www.imdb.com/title/tt4633694/characters/nm2159926" target="_blank">Character Page</a>).
+        </p>
+        
+        <p style="font-size: large;">
+            The <strong>TookALevelInIdealism</strong> trope describes a character who,
+            after experiencing or witnessing something that restores their hope and belief in righteousness,
+            gains renewed faith in their principles and faces life's challenges with newfound resolve,
+            though not necessarily with increased cheerfulness.
+            Go to
+            <a href="https://tvtropes.org/pmwiki/pmwiki.php/Main/TookALevelInIdealism" target="_blank">TookALevelInIdealism</a> 
+            to learn more about it.
+        </p>
+        
+        <h3>
+            Does <span style="color:rgb(255, 47, 0)">Peter B. Parker</span> portray or is associated with the 
+            <span style="color: rgb(0, 106, 255);">TookALevelInIdealism</span> trope?
+        </h3>
+
+        <div>
+            <input type="radio" id="portrayyes3" name="portray3" value="yes" required>
+            <label for="portrayyes3">Yes</label>
+        </div>
+        <div>
+            <input type="radio" id="portrayno3" name="portray3" value="no">
+            <label for="portrayno3">No</label>
+        </div>
+    </div>
+    <br>
+    <div>
+        <h1>Question 4</h1>
+        <p>
+            <img 
+            src="https://m.media-amazon.com/images/M/MV5BOWQ4OGE0YjItMmJkYy00ZDllLThiNDAtNWJiZTgxYTE5N2U1XkEyXkFqcGdeQXVyMjI0OTE3Njc@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 1"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BZjNmNTMwYzAtMDk4ZS00OGY4LTg0MjMtZjc1ZTNmMTlhOTc4XkEyXkFqcGdeQXVyNjUwNzk3NDc@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 2"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BZDY5Mzc4OTMtYWY3Yy00NzkyLWEwOGMtNzQ1MTgwYjJiMDdjXkEyXkFqcGdeQXVyNTc3MjUzNTI@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 3"/>
+        </p>
+        
+        <p style="font-size: large;">
+            <strong>Stephen</strong> is a character that appears in the movie <a href="https://www.imdb.com/title/tt1853728/" target="_blank"><i>Django Unchained</i></a> (<a href="https://www.imdb.com/title/tt1853728/characters/nm0000168" target="_blank">Character Page</a>).
+        </p>
+        
+        <p style="font-size: large;">
+            The <strong>GasMaskMook</strong> trope involves enemy Mooks wearing gas masks, often without practical need, to appear faceless and menacing. This is common in video games and films where they may represent Elite Mooks or SWAT teams, but rarely involves the use of actual chemical weapons against protagonists.
+            Go to
+            <a href="https://tvtropes.org/pmwiki/pmwiki.php/Main/GasMaskMook" target="_blank">GasMaskMook</a> to learn
+            more about it.
+        </p>
+        
+        <h3>
+            Does <span style="color:rgb(255, 47, 0)">Stephen</span> portray or is associated with the 
+            <span style="color: rgb(0, 106, 255);">GasMaskMook</span> trope?
+        </h3>
+
+        <div>
+            <input type="radio" id="portrayyes4" name="portray4" value="yes" required>
+            <label for="portrayyes4">Yes</label>
+        </div>
+        <div>
+            <input type="radio" id="portrayno4" name="portray4" value="no">
+            <label for="portrayno4">No</label>
+        </div>
+    </div>
+    <div>
+        <h1>Question 5</h1>
+        <p>
+            <img 
+            src="https://m.media-amazon.com/images/M/MV5BOTE2NjI5Nzk5OV5BMl5BanBnXkFtZTcwNzUxODgzNA@@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 1"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BOTA0NTk1MDA0M15BMl5BanBnXkFtZTcwNDY5NjYzNA@@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 2"/>
+            <img src="https://m.media-amazon.com/images/M/MV5BMTQ2OTM0ODg5MF5BMl5BanBnXkFtZTcwNjc1NTMwNQ@@._V1_.jpg" 
+            style="max-width: 33%; max-height: 250px" alt="character image 3"/>
+        </p>
+        
+        <p style="font-size: large;">
+            <strong>Lightning McQueen</strong> is a character that appears in the movie <a href="https://www.imdb.com/title/tt1216475/" target="_blank"><i>Cars 2</i></a> (<a href="https://www.imdb.com/title/tt1216475/characters/nm0005562" target="_blank">Character Page</a>).
+        </p>
+        
+        <p style="font-size: large;">
+            The <strong>MyGodWhatHaveIDone</strong> trope involves a character realizing that their actions have caused significant harm, leading to dramatic remorse. This often occurs when someone or something close to them is hurt. It can prompt a desire to make amends, be ignored, or lead to further internal conflict.
+            Go to
+            <a href="https://tvtropes.org/pmwiki/pmwiki.php/Main/MyGodWhatHaveIDone" target="_blank">MyGodWhatHaveIDone</a> to learn
+            more about it.
+        </p>
+        
+        <h3>
+            Does <span style="color:rgb(255, 47, 0)">Lightning McQueen</span> portray or is associated with the 
+            <span style="color: rgb(0, 106, 255);">MyGodWhatHaveIDone</span> trope?
+        </h3>
+
+        <div>
+            <input type="radio" id="portrayyes5" name="portray5" value="yes" required>
+            <label for="portrayyes5">Yes</label>
+        </div>
+        <div>
+            <input type="radio" id="portrayno5" name="portray5" value="no">
+            <label for="portrayno5">No</label>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- End Survey Link Layout -->
+</section>
+
+
+<!-- Please note that Bootstrap CSS/JS and JQuery are 3rd party libraries that may update their url/code at any time. 
+ Amazon Mechanical Turk (MTurk) is including these libraries as a default option for you, but is not responsible for 
+ any changes to the external libraries --><!-- External CSS references -->
+<link crossorigin="anonymous" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" 
+integrity="sha384-IS73LIqjtYesmURkDE9MXKbXqYA8rvKEp/ghicjem7Vc3mGRdQRptJSz60tvrB6+" rel="stylesheet" />
+<!-- Open internal style sheet -->
+<style type="text/css">
+
+#collapseTrigger{
+  color:#fff;
+  display: block;
+  text-decoration: none;
+}
+#submitButton{
+  white-space: normal;
+}
+.image{
+  margin-bottom: 10px; 
+}
+
+/* CSS for breaking long words/urls */
+.dont-break-out {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  -ms-word-break: break-all;
+  word-break: break-all;
+  word-break: break-word;
+  -ms-hyphens: auto;
+  -moz-hyphens: auto;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+}
+</style>
+<!-- Close internal style sheet -->
+<!-- External JS references -->
+<script src="https://code.jquery.com/jquery-3.1.0.min.js" 
+integrity="sha256-cCueBR6CsyA4/9szpPfrX3s49M9vUU5BgtiJj06wt/s=" 
+crossorigin="anonymous">
+</script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js" 
+integrity="sha384-s1ITto93iSMDxlp/79qhWHi+LsIi9Gx6yL+cOKDuymvihkfol83TYbLbOw+W/wv4" crossorigin="anonymous">
+</script>
+
+<!-- Open internal javascript -->
+<script>
+	$(document).ready(function() {
+	// Instructions expand/collapse
+	var content = $('#instructionBody');
+	var trigger = $('#collapseTrigger');
+	content.hide();
+	$('.collapse-text').text('(Click to expand)');
+	trigger.click(function(){
+		content.toggle();
+		var isVisible = content.is(':visible');
+		if(isVisible){
+		$('.collapse-text').text('(Click to collapse)');
+		}else{
+		$('.collapse-text').text('(Click to expand)');
+		}
+	});
+	// end expand/collapse
+	});
+</script><!-- Close internal javascript -->
