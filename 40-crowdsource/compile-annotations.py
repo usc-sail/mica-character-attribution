@@ -72,7 +72,7 @@ def compile_annotations(_):
 
     # read unreliable worker ids
     with open(unreliable_workerids_file) as fr:
-        unreliable_workerids = set(fr.read().strip().split("\n"))
+        unreliable_workerids = fr.read().strip().split("\n")
     print(f"{len(unreliable_workerids)} unreliable worker ids")
 
     # add a column to indicate worker reliability
@@ -82,7 +82,7 @@ def compile_annotations(_):
     n_unreliable_annotations = (~annotation_df["reliable"]).sum()
     percent_unreliable_annotations = 100 * n_unreliable_annotations / n
     print(f"{n_unreliable_annotations} unreliable annotations ({percent_unreliable_annotations:.1f}%)")
-    print(f"{n - n_unreliable_annotations} reliable annotations ({100 - percent_unreliable_annotations:.1f}%)")
+    print(f"{n - n_unreliable_annotations} reliable annotations ({100 - percent_unreliable_annotations:.1f}%)\n")
 
     # merge dataset with annotation to find how many samples have been partially annotated
     dataset_df = pd.read_csv(dataset_file, index_col=None, dtype={"imdb-id": str, "content-text": str})
@@ -92,11 +92,20 @@ def compile_annotations(_):
     # calculate krippendorff's score
     workerids = dataset_df["worker-id"].unique()
     unitids = list(dataset_df[["character", "trope"]].drop_duplicates().itertuples(index=False, name=None))
-    reliability_df = pd.DataFrame(index=workerids, columns=unitids)
+    workerid_to_index = {workerid: i for i, workerid in enumerate(workerids)}
+    unitid_to_index = {unitid: i for i, unitid in enumerate(unitids)}
+    reliability_data = np.full((len(workerids), len(unitids)), fill_value=np.nan, dtype="O")
     for character, trope, workerid, annotation in (dataset_df[["character", "trope", "worker-id", "annotation"]]
                                                    .itertuples(index=False, name=None)):
-        reliability_df.loc[workerid, (character, trope)] = annotation
-    krippendorff.alpha()
+        if annotation in ["yes", "maybeyes", "maybeno", "no"]:
+            i = workerid_to_index[workerid]
+            j = unitid_to_index[(character, trope)]
+            reliability_data[i, j] = annotation
+    reliability_data = reliability_data[~np.isin(workerids, list(unreliable_workerids))]
+    alpha = krippendorff.alpha(reliability_data=reliability_data.astype(str),
+                               value_domain=["no", "maybeno", "maybeyes", "yes"],
+                               level_of_measurement="ordinal")
+    print(f"krippendorff's alpha = {alpha:.3f}\n")
 
     # create aggregate annotations file
     aggregate_rows = []
@@ -136,7 +145,9 @@ def compile_annotations(_):
     # create combinations distribution file
     combination_rows = []
     labels = ["yes", "maybeyes", "maybeno", "no"]
+    print("distribution of annotations:")
     for r in range(4):
+        print(f"\t {r} annotations per sample")
         for combination in itertools.combinations_with_replacement(labels, r):
             combination_arr = np.array(combination)
             combination_n_yes = (combination_arr == "yes").sum()
@@ -151,6 +162,9 @@ def compile_annotations(_):
             percentage_samples = 100 * combination_samples/len(aggregate_df)
             combination_rows.append([r, combination_n_yes, combination_n_maybeyes, combination_n_maybeno,
                                      combination_n_no, combination_label, combination_samples, percentage_samples])
+            value = (2 * combination_n_yes + combination_n_maybeyes - combination_n_maybeno - 2 * combination_n_no)/6
+            print(f"\t\t{combination_n_yes}Y {combination_n_maybeyes}y {combination_n_maybeno}n {combination_n_no}N"
+                  f"\tval = {value:4.1f}  {combination_samples:4d} ({percentage_samples:.1f}%)")
     combination_df = pd.DataFrame(combination_rows, columns=["n", "yes", "maybeyes", "maybeno", "no", "combination",
                                                              "samples", "percentage"])
 
