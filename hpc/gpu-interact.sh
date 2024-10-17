@@ -1,5 +1,6 @@
 #!/bin/bash
 # v100(32)/p100(16)/a40(48)/a100(40)
+# add --constraint=a100-80gb to specifically ask for a100 80 GB gpu
 
 salloc \
 --account=shrikann_35 \
