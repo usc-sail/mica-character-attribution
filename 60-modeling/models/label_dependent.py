@@ -36,7 +36,7 @@ class LabelDependent(nn.Module):
         =====
             story_embeddings = [n_blocks, sequence_length, hidden_size]
             label_embeddings = [n_labels, hidden_size]
-            names_mask = [n_characters, sequence_length]
+            names_mask = [n_characters, n_blocks, sequence_length]
 
         Output
         ======
@@ -45,7 +45,7 @@ class LabelDependent(nn.Module):
         names_score = self.name_weights(story_embeddings).squeeze(dim=2)
         # names_score = [n_blocks, seqlen]
 
-        names_attn = torch.softmax(names_score.unsqueeze(dim=0) + names_mask.unsqueeze(dim=1), dim=2)
+        names_attn = torch.softmax(names_score.unsqueeze(dim=0) + names_mask, dim=2)
         # names_attn = [n_characters, n_blocks, seqlen]
 
         names_embeddings = torch.bmm(names_attn.permute(1, 0, 2), story_embeddings).permute(1, 0, 2)
@@ -205,19 +205,22 @@ class LabelDependent(nn.Module):
     def forward(self,
                 story_input_ids,
                 names_mask,
-                utterances_mask,
                 mentions_mask,
+                utterances_mask,
                 mention_character_ids,
-                label_input_ids):
+                utterances_character_ids,
+                label_input_ids
+                ):
         """Create character representations conditioned on the labels
 
         Input
         =====
             story_input_ids = [n_blocks, sequence_length]
-            names_mask = [n_characters, sequence_length]
-            utterances_mask = [n_characters, total_sequence_length]
-            mentions_mask = [n_mentions, total_sequence_length]
+            names_mask = [n_characters, 2]
+            mentions_mask = [n_mentions, 2]
+            utterances_mask = [n_utterances, 2]
             mention_character_ids = [n_mentions]
+            utterances_character_ids = [n_utterances]
             label_input_ids = [n_labels, max_sequence_length]
             
             Here, total_sequence_length = n_blocks x max_sequence_length
@@ -226,6 +229,29 @@ class LabelDependent(nn.Module):
         ======
             character_embeddings = [n_characters, n_labels, hidden_size]
         """
+        n_blocks, seqlen = story_input_ids.shape
+        n_characters = len(names_mask)
+        device=next(self.parameters()).device
+
+        sequence = torch.arange(n_blocks * seqlen, device=device).reshape(1, -1)
+        names_mask = torch.log((names_mask[:, 0].view(-1, 1) <= sequence) & (names_mask[:, 1].view(-1, 1) > sequence))
+        names_mask = names_mask.reshape(n_characters, n_blocks, seqlen)
+        # names_mask = [n_characters, n_blocks, seqlen]
+
+        mentions_mask = mentions_mask.reshape(-1, 2)
+        mentions_mask = torch.log((mentions_mask[:, 0].view(-1, 1) <= sequence)
+                                  & (mentions_mask[:, 1].view(-1, 1) > sequence))
+        # mentions_mask = [n_mentions, n_blocks x seqlen]
+
+        utterances_mask_exp = torch.zeros((n_characters, n_blocks * seqlen), dtype=torch.float32, device=device)
+        utterances_mask = utterances_mask.reshape(-1, 2)
+        utterances_mask = ((utterances_mask[:, 0].view(-1, 1) <= sequence)
+                           & (utterances_mask[:, 1].view(-1, 1) > sequence))
+        # utterances_mask = [n_utterances, n_blocks x seqlen]
+        for i in utterances_character_ids.unique():
+            utterances_mask_exp[i] = utterances_mask[utterances_character_ids == i].sum()
+        utterances_mask = torch.log(utterances_mask_exp)
+
         story_embeddings = self.encoder(story_input_ids).last_hidden_state
         # story_embeddings = [n_blocks, seqlen, hidden_size]
 
@@ -235,7 +261,6 @@ class LabelDependent(nn.Module):
         name_label_embeddings = self.name_representation(story_embeddings, label_embeddings, names_mask)
         # name_label_embeddins = [n_characters, n_labels, hidden_size]
 
-        n_characters = len(names_mask)
         mention_label_embeddins = self.mention_representation(n_characters, story_embeddings, label_embeddings,
                                                               mentions_mask, mention_character_ids)
         # mention_label_embeddings = [n_characters, n_labels, hidden_size]
