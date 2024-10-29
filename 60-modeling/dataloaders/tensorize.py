@@ -21,10 +21,12 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     Output
     ======
         story_token_ids = long tensor [n_blocks, max_sequence_length]
-        mentions_mask = float tensor [n_mentions, n_blocks x max_sequence_length]
-        utterances_mask = float tensor [n_characters, n_blocks x max_sequence_length]
-        names_mask = float tensor [n_characters, max_sequence_length]
+        names_mask = float tensor [n_characters, 2]
+        mentions_mask = float tensor [n_mentions, 2]
+        utterances_mask = float tensor [n_utterances, 2]
         mention_character_ids = long tensor [n_mentions]
+        utterance_character_ids = long tensor [n_utterances]
+    Therefore, the total size is O(n_blocks x max_sequence_length + n_characters + n_mentions + n_utterances)
     """
     # create the first sentence of the sequence
     max_n_tokens_sentence_pair = tokenizer.max_len_sentences_pair
@@ -34,13 +36,14 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     for imdb_character in imdb_characters:
         imdb_character_spans.append([c, c + len(imdb_character)])
         c += len(imdb_character) + 1
-    tokenizer_output = tokenizer(imdb_characters_sentence, return_offsets_mapping=True, return_special_tokens_mask=True)
+    tokenizer_output = tokenizer(imdb_characters_sentence, return_offsets_mapping=True, add_special_tokens=True,
+                                 return_special_tokens_mask=True)
     n_tokens_imdb_characters_sentence = sum([m == 0 for m in tokenizer_output.special_tokens_mask])
     n_tokens_first_sentence = len(tokenizer_output.input_ids)
     imdb_character_to_id = dict([(imdb_character, i) for i, imdb_character in enumerate(imdb_characters)])
 
     # create name mask
-    names_mask = torch.zeros((len(imdb_characters), tokenizer.model_max_length), dtype=torch.float32)
+    names_mask = [[0, 0] for _ in range(len(imdb_characters))]
     offsets_mapping = tokenizer_output.offset_mapping
     special_tokens_mask = tokenizer_output.special_tokens_mask
     i = 0
@@ -51,12 +54,12 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
             while k < len(offsets_mapping) and (special_tokens_mask[k] == 1 
                                                 or offsets_mapping[k][1] != imdb_character_spans[j][1]):
                 k += 1
-            names_mask[j, i: k + 1] = 1
+            names_mask[j] = [i, k + 1]
             j += 1
             i = k
         else:
             i += 1
-    names_mask = torch.log(names_mask)
+    names_mask = torch.log(torch.tensor(names_mask))
 
     # join segments dataframe with the mention and utterance spans dataframes
     segments_df["n-tokens"] = segments_df["segment-text"].apply(
@@ -203,9 +206,10 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     n_blocks, n_tokens_sequence = token_ids.shape
     n_tokens_story = n_blocks * n_tokens_sequence
     second_sentence_mask = torch.arange(n_tokens_sequence) >= n_tokens_first_sentence
-    mention_mask = torch.zeros((len(mention_spans), n_tokens_story), dtype=torch.float32)
-    utterance_mask = torch.zeros((len(imdb_characters), n_tokens_story), dtype=torch.float32)
+    mention_mask = [[0, 0] for _ in range(len(mention_spans))]
+    utterance_mask = [[0, 0] for _ in range(len(utterance_spans))]
     mention_character_ids = []
+    utterance_character_ids = []
     n_mentions_not_matched, n_utterances_not_matched = 0, 0
 
     # match text spans to tokenizer offsets
@@ -216,25 +220,37 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
                                      & second_sentence_mask).flatten()
         if len(start_indices) and len(end_indices) and start_indices.max() <= end_indices.min():
             p, q = start_indices.max(), end_indices.min()
-            mention_mask[i, j * n_tokens_sequence + p: j * n_tokens_sequence + q + 1] = 1
+            mention_mask[i] = [j * n_tokens_sequence + p, j * n_tokens_sequence + q + 1]
             mention_character_ids.append(k)
         else:
             n_mentions_not_matched += 1
 
     # match text spans to tokenizer offsets
-    for j, k, start, end in utterance_spans:
+    for i, (j, k, start, end) in enumerate(utterance_spans):
         start_indices = torch.nonzero((offsets_mapping[j, :, 0] <= start) & (special_tokens_mask[j] == 0)
                                        & second_sentence_mask).flatten()
         end_indices = torch.nonzero((offsets_mapping[j, :, 1] >= end) & (special_tokens_mask[j] == 0)
                                      & second_sentence_mask).flatten()
         if len(start_indices) and len(end_indices) and start_indices.max() <= end_indices.min():
             p, q = start_indices.max(), end_indices.min()
-            utterance_mask[k, j * n_tokens_sequence + p: j * n_tokens_sequence + q + 1] = 1
+            utterance_mask[i] = [j * n_tokens_sequence + p, j * n_tokens_sequence + q + 1]
+            utterance_character_ids.append(k)
         else:
             n_utterances_not_matched += 1
 
-    # remove non-matched spans
-    mention_mask = mention_mask[(mention_mask == 1).any(axis=1)]
+    # remove non-matched mention spans
+    mention_mask = torch.tensor(mention_mask)
+    mention_character_ids = torch.LongTensor(mention_character_ids)
+    if len(mention_spans) > 0:
+        mention_character_ids = mention_character_ids[(mention_mask != 0).any(axis=1)]
+        mention_mask = mention_mask[(mention_mask != 0).any(axis=1)]
+
+    # remove non-matched utterance spans
+    utterance_mask = torch.tensor(utterance_mask)
+    utterance_character_ids = torch.LongTensor(utterance_character_ids)
+    if len(utterance_spans) > 0:
+        utterance_character_ids = utterance_character_ids[(utterance_mask != 0).any(axis=1)]
+        utterance_mask = utterance_mask[(utterance_mask != 0).any(axis=1)]
 
     if n_mentions_not_in_blocks or n_mentions_not_matched or n_utterances_not_in_blocks or n_utterances_not_matched:
         logging.warn(f"{n_mentions} mentions, {n_mentions_not_in_blocks} mentions not in encoded text, "
@@ -245,5 +261,4 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     # convert 0 to -inf, 1 to 0
     mention_mask = torch.log(mention_mask)
     utterance_mask = torch.log(utterance_mask)
-    mention_character_ids = torch.LongTensor(mention_character_ids)
-    return token_ids, mention_mask, utterance_mask, names_mask, mention_character_ids
+    return token_ids, mention_mask, utterance_mask, names_mask, mention_character_ids, utterance_character_ids

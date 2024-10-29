@@ -58,7 +58,8 @@ def save_story_tensors(_):
             imdb_ids, imdb_characters_arr, segments_dfs, mentions_dfs, utterances_dfs)):
         logging.info(f"{i + 1:3d}/{len(imdb_ids)}. imdb-id = {imdb_id}")
         try:
-            story_token_ids, mentions_mask, utterances_mask, names_mask, mention_character_ids = (
+            (story_token_ids, mentions_mask, utterances_mask, names_mask, mention_character_ids, 
+                utterance_character_ids) = (
                 tensorize.create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df))
             imdb_tensors_dir = os.path.join(tensors_dir, imdb_id)
             os.makedirs(imdb_tensors_dir, exist_ok=True)
@@ -67,6 +68,7 @@ def save_story_tensors(_):
             torch.save(utterances_mask, os.path.join(imdb_tensors_dir, "utterances-mask.pt"))
             torch.save(names_mask, os.path.join(imdb_tensors_dir, "names-mask.pt"))
             torch.save(mention_character_ids, os.path.join(imdb_tensors_dir, "mention-character-ids.pt"))
+            torch.save(utterance_character_ids, os.path.join(imdb_tensors_dir, "utterance-character-ids.pt"))
             with open(os.path.join(imdb_tensors_dir, "characters.txt"), "w") as fw:
                 fw.write("\n".join(imdb_characters))
             logging.info("done")
