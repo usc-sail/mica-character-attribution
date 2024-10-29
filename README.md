@@ -12,7 +12,8 @@ Therefore, CHATTER is a long-document dataset for character attribution.
 
 We draw the tropes from [TVTropes](https://tvtropes.org), which is a community-driven resource similar to Wikipedia.
 It contains trope annotations of literature, movies, TV shows, video games, print media and comics.
-Fans and followers of any creative work identify the tropes portrayed in the story and post them on the TVTropes page for that work.
+Fans and followers of any creative work identify the tropes portrayed in the story and post them on the TVTropes page 
+for that work.
 TVTropes editors and users maintain and revise the content regularly.
 
 However, we need a more reliable dataset to serve as the test set for character attribution.
@@ -32,7 +33,9 @@ CHATTEREVAL also contains the annotation labels of the individual raters to enco
 ## Baselines
 
 We develop baselines using zero-shot prompting on CHATTEREVAL for the character attribution task.
-The below table shows the performance of prompting the closed-source Gemini-1.5-Flash and the open-source Llama-3.1-8B-Instruct models on the full movie script or the script segments containing the character's mentions or utterances.
+The below table shows the performance of prompting the closed-source Gemini-1.5-Flash and the open-source 
+Llama-3.1-8B-Instruct models on the full movie script or the script segments containing the character's mentions or 
+utterances.
 We also evaluate the performance of the CHATTER dataset's labels on CHATTEREVAL.
 
 | Input   | Model                 | Precision | Recall | F1   | weighted-F1 |
@@ -47,3 +50,16 @@ We also evaluate the performance of the CHATTER dataset's labels on CHATTEREVAL.
 ## Repository Organization
 
 This repository contains the code used to curate the CHATTER and CHATTEREVAL dataset.
+The functions of different directories are as follows:
+
+1. 10-crawling: Contains code to crawl TVTropes
+2. 20-preprocessing: Create the CHATTER dataset
+3. 30-statistics: Print statistics of the CHATTER dataset and movie scripts.
+4. 40-crowdsource: Manage the Amazon MTurk annotation files and create the CHATTEREVAL dataset.
+5. 50-prompting: Establish baselines on CHATTEREVAL.
+6. 60-modeling: Train models on CHATTER.
+7. hpc: Contains scripts to request compute nodes on HPC.
+
+#### Contact
+
+Please contact [Sabyasachee Baruah](mailto:sbaruah@usc.edu) for further details
