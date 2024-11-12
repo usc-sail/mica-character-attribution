@@ -1,4 +1,5 @@
 """Find character representations from the name, mentions, and utterances of the character conditioned on the labels"""
+from models.pretrained import Model
 
 import torch
 from torch import nn
@@ -6,25 +7,11 @@ from transformers import AutoModel, AutoConfig
 
 class LabelDependent(nn.Module):
 
-    def __init__(self, pretrained_model_name, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        self.encoder = AutoModel.from_pretrained(pretrained_model_name)
-        config = AutoConfig.from_pretrained(pretrained_model_name)
-        self.hidden_size = config.hidden_size
-        self.name_weights = nn.Linear(self.hidden_size, 1)
-        self.mentions_weights = nn.Linear(self.hidden_size, 1)
-        self.combine_weights = nn.Linear(self.hidden_size, 1)
-
-    @property
-    def encoder_parameters(self):
-        return self.encoder.parameters()
-
-    @property
-    def non_encoder_parameters(self):
-        for name, parameter in self.named_parameters():
-            if not name.startswith("encoder"):
-                yield parameter
+    def __init__(self, hidden_size) -> None:
+        super().__init__()
+        self.name_weights = nn.Linear(hidden_size, 1)
+        self.mentions_weights = nn.Linear(hidden_size, 1)
+        self.combine_weights = nn.Linear(hidden_size, 1)
 
     def name_representation(self,
                             story_embeddings,
@@ -203,25 +190,25 @@ class LabelDependent(nn.Module):
         return character_embeddings
 
     def forward(self,
-                story_input_ids,
-                names_mask,
-                mentions_mask,
-                utterances_mask,
+                story_embeddings,
+                names_idx,
+                mentions_idx,
+                utterances_idx,
                 mention_character_ids,
                 utterances_character_ids,
-                label_input_ids
+                label_embeddings
                 ):
         """Create character representations conditioned on the labels
 
         Input
         =====
-            story_input_ids = [n_blocks, sequence_length]
-            names_mask = [n_characters, 2]
-            mentions_mask = [n_mentions, 2]
-            utterances_mask = [n_utterances, 2]
+            story_embeddings = [n_blocks, sequence_length, hidden_size]
+            names_idx = [n_characters, 2]
+            mentions_idx = [n_mentions, 2]
+            utterances_idx = [n_utterances, 2]
             mention_character_ids = [n_mentions]
             utterances_character_ids = [n_utterances]
-            label_input_ids = [n_labels, max_sequence_length]
+            label_embeddings = [n_labels, max_sequence_length, hidden_size]
             
             Here, total_sequence_length = n_blocks x max_sequence_length
 
@@ -229,34 +216,28 @@ class LabelDependent(nn.Module):
         ======
             character_embeddings = [n_characters, n_labels, hidden_size]
         """
-        n_blocks, seqlen = story_input_ids.shape
-        n_characters = len(names_mask)
+        n_blocks, seqlen, _ = story_embeddings.shape
+        n_characters = len(names_idx)
         device=next(self.parameters()).device
 
         sequence = torch.arange(n_blocks * seqlen, device=device).reshape(1, -1)
-        names_mask = torch.log((names_mask[:, 0].view(-1, 1) <= sequence) & (names_mask[:, 1].view(-1, 1) > sequence))
+        names_mask = torch.log((names_idx[:, 0].view(-1, 1) <= sequence) & (names_idx[:, 1].view(-1, 1) > sequence))
         names_mask = names_mask.reshape(n_characters, n_blocks, seqlen)
         # names_mask = [n_characters, n_blocks, seqlen]
 
-        mentions_mask = mentions_mask.reshape(-1, 2)
-        mentions_mask = torch.log((mentions_mask[:, 0].view(-1, 1) <= sequence)
-                                  & (mentions_mask[:, 1].view(-1, 1) > sequence))
+        mentions_idx = mentions_idx.reshape(-1, 2)
+        mentions_mask = torch.log((mentions_idx[:, 0].view(-1, 1) <= sequence)
+                                  & (mentions_idx[:, 1].view(-1, 1) > sequence))
         # mentions_mask = [n_mentions, n_blocks x seqlen]
 
         utterances_mask_exp = torch.zeros((n_characters, n_blocks * seqlen), dtype=torch.float32, device=device)
-        utterances_mask = utterances_mask.reshape(-1, 2)
-        utterances_mask = ((utterances_mask[:, 0].view(-1, 1) <= sequence)
-                           & (utterances_mask[:, 1].view(-1, 1) > sequence))
+        utterances_idx = utterances_idx.reshape(-1, 2)
+        utterances_mask = ((utterances_idx[:, 0].view(-1, 1) <= sequence)
+                           & (utterances_idx[:, 1].view(-1, 1) > sequence))
         # utterances_mask = [n_utterances, n_blocks x seqlen]
         for i in utterances_character_ids.unique():
             utterances_mask_exp[i] = utterances_mask[utterances_character_ids == i].sum()
         utterances_mask = torch.log(utterances_mask_exp)
-
-        story_embeddings = self.encoder(story_input_ids).last_hidden_state
-        # story_embeddings = [n_blocks, seqlen, hidden_size]
-
-        label_embeddings = self.encoder(label_input_ids).pooler_output
-        # label_embeddings = [n_labels, hidden_size]
 
         name_label_embeddings = self.name_representation(story_embeddings, label_embeddings, names_mask)
         # name_label_embeddins = [n_characters, n_labels, hidden_size]
