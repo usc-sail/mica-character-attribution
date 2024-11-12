@@ -79,3 +79,15 @@ for character c in characters C:
     P-mil = max(P, axis = movie axis) so P-mil is of size |T_c| + |K_c|
     get cross-entropy loss between L and P-mil
     backpropagate
+
+training:
+for movie m in movies M:
+    C is the set of characters that appear in movie m
+    T is the set of tropes portrayed by characters C in the partition P
+    Batch T into subsets each of size s
+    For each subbatch t of T:
+        run model on movie m
+        model returns C x t x d matrix
+        run classifier to get C x t logits
+        create labels L of shape C x t
+        assumption: 1) if C portrays trope, label is 1, 2) 
