@@ -1,203 +1,172 @@
 """Train and evaluate the label dependent model on full story"""
 import evaluation
 from dataloaders.data import Chatter
+from absl import logging
 
+import collections
+import math
+import time
 import tqdm
 import torch
 import numpy as np
 from torch.nn import BCEWithLogitsLoss
 
-def get_component_tensors(chatter: Chatter, imdbid_to_tensors, alltropes, hidden_size):
-    """Get component data"""
-    componentid_to_tensors = {}
-    componentids = chatter.train_componentids + chatter.dev_componentids
-    for i, componentid in tqdm.tqdm(enumerate(componentids), desc="creating batch tensors", unit="batch",
-                                    total=len(componentids)):
-        characterids = set()
-        tropes = set()
-        imdbids = set()
-        for characterid, trope in chatter.componentid_to_characterids_and_tropes[componentid]:
-            characterids.add(characterid)
-            tropes.add(trope)
-            imdbids.update(chatter.characterid_to_imdbids[characterid])
-        characterids = sorted(characterids)
-        tropes = sorted(tropes)
-        imdbids = sorted(imdbids)
+def run(encoder,
+        model,
+        classifier,
+        partition,
+        batch_imdbid,
+        chatter:Chatter,
+        batch_imdbid_to_tensors,
+        tropes,
+        trope_embeddings,
+        trope_to_idx,
+        loss_function,
+        max_tropes_per_batch):
+    """run model and classifier on batch movie"""
+    if partition == "train":
+        batch_tropes = chatter.trn_batch_imdbid_to_tropes[batch_imdbid]
+    elif partition == "dev":
+        batch_tropes = chatter.dev_batch_imdbid_to_tropes[batch_imdbid]
+    elif partition == "test":
+        batch_tropes = chatter.tst_batch_imdbid_to_tropes[batch_imdbid]
 
-        # construct the character x trope labels array where value of positive entries (character portrays trope) is 1,
-        # value of negative entries (character does not portray trope) is 0, and value of all other entries (we do not
-        # know if character portrays or does not portray trope) is IGNORE_VALUE
-        labels_arr = torch.full((len(characterids), len(tropes)), fill_value=100, dtype=torch.float32).cuda()
+    n_subbatches = math.ceil(len(batch_tropes) / max_tropes_per_batch)
+    logits_dict = collections.defaultdict(set)
+    for i in range(n_subbatches):
+        subbatch_tropes = tropes[i * max_tropes_per_batch: (i + 1) * max_tropes_per_batch]
+        subbatch_tropes_idx = [trope_to_idx[trope] for trope in subbatch_tropes]
+        subbatch_trope_embeddings = trope_embeddings[subbatch_tropes_idx]
+        tensors = batch_imdbid_to_tensors[batch_imdbid]
+        characterids = tensors["character-ids"]
+
+        # embeddings = characters x tropes x hidden-size
+        story_embeddings = encoder(tensors["token-ids"]).last_hidden_state
+        embeddings = model(story_embeddings,
+                           tensors["names-idx"],
+                           tensors["mentions-idx"],
+                           tensors["utterances-idx"],
+                           tensors["mentions-character-ids"],
+                           tensors["utterances-character-ids"],
+                           subbatch_trope_embeddings)
+
+        # logits = characters x tropes
+        logits = classifier(embeddings)
+
+        # create labels = characters x tropes
+        subbatch_labels = torch.full((len(characterids), len(subbatch_tropes)), device="cuda:0", fill_value=100,
+                                     dtype=torch.float32)
         for i, characterid in enumerate(characterids):
-            for j, trope in enumerate(tropes):
+            for j, trope in enumerate(subbatch_tropes):
                 if (characterid, trope) in chatter.characterid_and_trope_to_label:
-                    label = chatter.characterid_and_trope_to_label[(characterid, trope)]
-                    labels_arr[i, j] = label
+                    subbatch_labels[i, j] = chatter.characterid_and_trope_to_label[(characterid, trope)]
+                    logits_dict[(characterid, trope)].add(logits[i, j].item())
 
-        # construct the character x trope labels mask array
-        labels_mask = (labels_arr != 100)
+        # loss
+        mask = subbatch_labels != 100
+        logits = logits[mask]
+        labels = subbatch_labels[mask]
+        loss = loss_function(logits, labels)
+        yield loss, logits_dict
 
-        imdbid_to_index = {}
-        for j, imdbid in enumerate(imdbids):
-            imdb_characterids = imdbid_to_tensors[imdbid]["character-ids"]
-            common_characterids = [characterid for characterid in characterids if characterid in imdb_characterids]
-            component_index = [characterids.index(characterid) for characterid in common_characterids]
-            imdb_index = [imdb_characterids.index(characterid) for characterid in common_characterids]
-            imdbid_to_index[imdbid] = (j, component_index, imdb_index)
-
-        trope_index = [alltropes.index(trope) for trope in tropes]
-
-        componentid_to_tensors[componentid] = {"label": labels_arr,
-                                               "mask": labels_mask,
-                                               "characterids": characterids,
-                                               "imdbids": imdbids,
-                                               "tropes": tropes,
-                                               "imdbid_to_index": imdbid_to_index,
-                                               "trope_index": trope_index
-                                               }
-    return componentid_to_tensors
-
-def model_component(model, classifier, componentid, chatter:Chatter, componentid_to_tensors, imdbid_to_tensors, 
-                    trope_token_ids, loss_function):
-    """run model and classifier on component"""
-    # move the component data to gpu
-    labels_arr = componentid_to_tensors[componentid]["label"]
-    labels_mask = componentid_to_tensors[componentid]["mask"]
-    characterids = componentid_to_tensors[componentid]["characterids"]
-    imdbids = componentid_to_tensors[componentid]["imdbids"]
-    tropes = componentid_to_tensors[componentid]["tropes"]
-    component_trope_token_ids = trope_token_ids[componentid_to_tensors[componentid]["trope_index"]]
-
-    # initialize the component character embeddings matrix
-    # it is a zero matrix of shape characters x tropes x movies x hidden size
-    character_embeddings = torch.zeros((len(characterids), len(tropes), len(imdbids), model.hidden_size), 
-                                        dtype=torch.float32,
-                                        requires_grad=componentid in chatter.train_componentids).cuda()
-
-    # loop of component movies
-    for imdbid in componentid_to_tensors[componentid]["imdbids"]:
-        # move the movie data to gpu
-        movie_token_ids = imdbid_to_tensors[imdbid]["token-ids"]
-        movie_names_mask = imdbid_to_tensors[imdbid]["names-mask"]
-        movie_mentions_mask = imdbid_to_tensors[imdbid]["mentions-mask"]
-        movie_utterances_mask = imdbid_to_tensors[imdbid]["utterances-mask"]
-        movie_mentions_character_ids = imdbid_to_tensors[imdbid]["mentions-character-ids"]
-        movie_utterances_character_ids = imdbid_to_tensors[imdbid]["utterances-character-ids"]
-
-        # run model
-        # movie_character_embeddings = movie-characters x component-tropes x hidden-size
-        movie_character_embeddings = model(movie_token_ids,
-                                           movie_names_mask,
-                                           movie_mentions_mask,
-                                           movie_utterances_mask,
-                                           movie_mentions_character_ids,
-                                           movie_utterances_character_ids,
-                                           component_trope_token_ids)
-
-        # assign the character embeddings to the component character embeddings
-        movie_index, characters_index, movie_characters_index = (
-            componentid_to_tensors[componentid]["imdbid_to_index"][imdbid])
-        character_embeddings[characters_index, :, movie_index] = (
-            movie_character_embeddings[movie_characters_index].unsqueeze(dim=2))
-
-    # classify whether character portrays trope
-    logits = classifier(character_embeddings)
-    logits = torch.max(logits, dim=2).values
-
-    # compute loss
-    labels = labels_arr[labels_mask]
-    logits = logits[labels_mask]
-    loss = loss_function(logits, labels)
-
-    return loss, logits, labels
-
-def train(model, classifier, optimizer, data_df, character_movie_map_df, tropes, trope_token_ids,
-          tensors_dir, n_epochs, n_tropes_per_batch):
-    print("initializing CHATTER data\n")
+def train(encoder,
+          model,
+          classifier,
+          optimizer,
+          data_df,
+          character_movie_map_df,
+          tropes,
+          trope_embeddings,
+          tensors_dir,
+          n_epochs,
+          max_tokens_per_batch,
+          max_tropes_per_batch):
+    logging.info("initializing CHATTER data")
     chatter = Chatter(data_df, character_movie_map_df)
-
-    print("creating batches")
-    chatter.batch_components(n_tropes_per_batch)
-    train_componentids = chatter.train_componentids
-    dev_componentids = chatter.dev_componentids
-    print("\n")
-
-    print("reading movie tensors")
+    trope_to_idx = {trope:i for i, trope in enumerate(tropes)}
     imdbid_to_tensors = chatter.read_movie_data(tensors_dir)
-    print("\n")
 
-    print("creating batch tensors")
-    componentid_to_tensors = get_component_tensors(chatter, imdbid_to_tensors, tropes, model.hidden_size)
-    print("\n")
+    logging.info("\ncreating batches")
+    batch_imdbid_to_tensors = chatter.batch_movies(imdbid_to_tensors, max_tokens_per_batch)
 
     # set up the loss function
     loss_function = BCEWithLogitsLoss()
 
-    print("\n\nstart training\n\n")
-
+    logging.info("\nstart training\n")
     for epoch in range(n_epochs):
-        # set the model to training mode
-        model.train()
-        classifier.train()
-
-        # generate a random sequence in which components will be traversed
-        componentids_index = np.random.permutation(len(train_componentids))
-
-        # initialize the loss, logits, and labels arrays
+        logging.info(f"Epoch {epoch + 1}")
         train_loss_arr = []
         valid_loss_arr = []
-        valid_logits_arr = []
-        valid_labels_arr = []
+        valid_logits_dict = collections.defaultdict(set)
 
-        tbar = tqdm.tqdm(componentids_index, unit="component", desc=f"training epoch {epoch + 1}")
+        # =================================================================
+        # start training
+        encoder.train()
+        model.train()
+        classifier.train()
+        idx = np.random.permutation(len(chatter.trn_batch_imdbids))
+        tbar = tqdm.tqdm(idx, unit="batch movie")
         for i in tbar:
-            # set the gradients to null
             optimizer.zero_grad()
-
-            # get the componentid
-            componentid = train_componentids[i]
-
-            # run model on component
-            loss, _, _ = model_component(model, classifier, componentid, chatter, componentid_to_tensors,
-                                         imdbid_to_tensors, trope_token_ids, loss_function)
-
-            # backpropagate loss
-            loss.backward()
-
-            # update parameters
-            optimizer.step()
-
-            # save loss to loss array
-            train_loss_arr.append(loss.item())
-            tbar.set_description(f"loss = {loss.item():.4f}")
-
-        # average the losses
+            batch_imdbid = chatter.trn_batch_imdbids[i]
+            for loss, _ in run(encoder,
+                               model,
+                               classifier,
+                               "train",
+                               batch_imdbid,
+                               chatter,
+                               batch_imdbid_to_tensors,
+                               tropes,
+                               trope_embeddings,
+                               trope_to_idx,
+                               loss_function,
+                               max_tropes_per_batch):
+                loss.backward()
+                optimizer.step()
+                train_loss_arr.append(loss.item())
+                tbar.set_description(f"train-loss = {loss.item():.4f}")
+                optimizer.zero_grad()
         avg_train_loss = np.mean(train_loss_arr)
-        print(f"epoch {epoch + 1}: train-loss = {avg_train_loss:.4f}")
+        logging.info(f"avg-train-loss = {avg_train_loss:.4f}")
+        # =================================================================
+        # end training
 
-        # set the model to evaluation mode
+        # =================================================================
+        # start evaluation
+        encoder.eval()
         model.eval()
         classifier.eval()
-
-        tbar = tqdm.trange(dev_componentids, unit="component", desc=f"evaluating epoch {epoch + 1}")
+        tbar = tqdm.tqdm(chatter.dev_batch_imdbids, unit="batch movie")
         with torch.no_grad():
-            for componentid in tbar:
-                # run model on component
-                loss, logits, labels = model_component(model, classifier, componentid, chatter, componentid_to_tensors,
-                                                       imdbid_to_tensors, trope_token_ids, loss_function)
-
-                # save loss to loss array
-                valid_loss_arr.append(loss.item())
-                tbar.set_description(f"loss = {loss.item():.4f}")
-
-                # save logits and labels
-                valid_logits_arr.append(logits)
-                valid_labels_arr.append(labels)
-
-        # evaluate
-        valid_logits = torch.cat(valid_logits_arr, dim=0)
-        valid_labels = torch.cat(valid_labels_arr, dim=0)
+            for batch_imdbid in tbar:
+                for loss, logits_dict in run(encoder,
+                                             model,
+                                             classifier,
+                                             "dev",
+                                             batch_imdbid,
+                                             chatter,
+                                             batch_imdbid_to_tensors,
+                                             tropes,
+                                             trope_embeddings,
+                                             trope_to_idx,
+                                             loss_function,
+                                             max_tropes_per_batch):
+                    # save loss to loss array
+                    valid_loss_arr.append(loss.item())
+                    for key, vals in logits_dict.items():
+                        valid_logits_dict[key].update(vals)
+                    tbar.set_description(f"valid-loss = {loss.item():.4f}")
+        valid_labels = []
+        valid_logits = []
+        for key, vals in valid_logits_dict.items():
+            valid_labels.append(chatter.characterid_and_trope_to_label[key])
+            valid_logits.append(max(vals))
+        evaluation.evaluate(valid_logits, valid_labels)
         accuracy, precision, recall, f1 = evaluation.evaluate(valid_logits, valid_labels)
         avg_valid_loss = np.mean(valid_loss_arr)
-        print(f"epoch {epoch + 1}: valid-loss = {avg_valid_loss:.4f} acc = {accuracy:.1f}, precision = {precision:.1f},"
-              f" recall = {recall:.1f}, f1 = {f1:.1f}\n")
+        logging.info(f"avg-valid-loss = {avg_valid_loss:.4f} acc = {accuracy:.1f}, "
+                     f"precision = {precision:.1f}, recall = {recall:.1f}, f1 = {f1:.1f}")
+        # =================================================================
+        # end evaluation
+
+        logging.info(f"Epoch {epoch + 1} done\n")

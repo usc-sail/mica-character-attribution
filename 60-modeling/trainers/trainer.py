@@ -3,72 +3,100 @@
 from models.label_dependent import LabelDependent
 from models.label_independent import LabelIndependent
 from models.classifier import PortayClassifier
-from trainers import story_label_dependent_trainer, character_label_dependent_trainer
-from trainers import story_label_independent_trainer, character_label_independent_trainer
+from models.pretrained import Model
+from trainers import story_label_dependent_trainer
+import datadirs
 
 import os
+import tqdm
+import itertools
 import pandas as pd
+from absl import logging
+
+import torch
 from torch.optim import AdamW
-from transformers import AutoTokenizer
+from peft import LoraConfig, get_peft_model, TaskType
 
 class Trainer:
 
-    def __init__(self, args):
+    def __init__(self, args, expdir):
         self.args = args
+        self.expdir = expdir
 
     def __call__(self):
-        dataset_file = os.path.join(self.args.datadir, "CHATTER/chatter.csv")
-        tropes_file = os.path.join(self.args.datadir, "CHATTER/tropes.csv")
-        character_movie_map_file = os.path.join(self.args.datadir, "CHATTER/character-movie-map.csv")
+        datadir = datadirs.datadir
+        dataset_file = os.path.join(datadir, "CHATTER/chatter.csv")
+        tropes_file = os.path.join(datadir, "CHATTER/tropes.csv")
+        character_movie_map_file = os.path.join(datadir, "CHATTER/character-movie-map.csv")
         dataset_df = pd.read_csv(dataset_file, index_col=None, dtype={"content-text": str})
-        tropes_df = pd.read_csv(tropes_file, index_col="trope")
+        tropes_df = pd.read_csv(tropes_file, index_col=None)
         character_movie_map_df = pd.read_csv(character_movie_map_file, index_col=None, dtype=str)
-        tensors_dir = os.path.join(self.args.datadir, "60-modeling/tensors", self.args.inputtype,
-                                   self.args.tokenizermodel)
+        tensors_dir = os.path.join(datadir, "60-modeling/tensors", self.args.input, self.args.model)
+        tropes_dir = os.path.join(datadir, "60-modeling/trope-embeddings")
+
+        # load trope embeddings
+        tropes = tropes_df["trope"].tolist()
+        trope_embeddings_files = sorted(os.listdir(tropes_dir))
+        trope_embeddings_arr = []
+        for file in tqdm.tqdm(trope_embeddings_files, desc="load trope embeddings", unit="file"):
+            trope_embeddings_arr.append(torch.load(os.path.join(tropes_dir, file), weights_only=True))
+        trope_embeddings = torch.cat(trope_embeddings_arr, dim=0).cuda()
+        logging.info(f"trope-embeddings = {tuple(trope_embeddings.shape)}")
 
         # initialize model
-        print("initializing model")
-        if self.args.labeldependent:
-            model = LabelDependent(self.args.pretrainedmodel)
-            classifier = PortayClassifier(model.hidden_size)
+        logging.info("initializing model")
+        if self.args.model == "roberta":
+            encoder = Model.roberta()
+            target_modules = ["query", "key", "value"]
+        elif self.args.model == "longformer":
+            encoder = Model.longformer(self.args.longformerattn)
+            target_modules = ["query", "key", "value", "global_query", "global_key", "global_value"]
+        hidden_size = encoder.config.hidden_size
+        if self.args.lbl:
+            model = LabelDependent(hidden_size)
+            classifier = PortayClassifier(hidden_size)
         else:
-            model = LabelIndependent(self.args.pretrainedmodel)
-            classifier = PortayClassifier(2 * model.hidden_size)
-        print("\n")
+            model = LabelIndependent(hidden_size)
+            classifier = PortayClassifier(2 * hidden_size)
+
+        # lora
+        logging.info("initializing lora adapters")
+        loraconfig = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION,
+                                inference_mode=False,
+                                r=self.args.rank,
+                                lora_alpha=self.args.alpha,
+                                target_modules=target_modules,
+                                use_rslora=True,
+                                lora_dropout=self.args.dropout,
+                                bias="none")
+        encoder = get_peft_model(encoder, loraconfig)
 
         # move model to gpu
-        print("moving model to gpu")
+        logging.info("moving model to gpu")
+        encoder.cuda()
         model.cuda()
         classifier.cuda()
 
-        # freeze encoder if flag is set
-        if self.args.freezeencoder:
-            for parameter in model.encoder.parameters():
-                parameter.requires_grad = False
-
         # initialize optimizer
-        print("initializing optimizer")
-        parameters = [{"params": model.non_encoder_parameters}, {"params": classifier.parameters()}]
-        if not self.args.freezeencoder:
-            parameters.append({"params": model.encoder_parameters, "lr": self.args.encoderlr})
-        optimizer = AdamW(parameters, lr=self.args.lr)
-        print("\n")
-
-        # encode traits
-        print("encoding trope definitions")
-        tokenizer = AutoTokenizer.from_pretrained(self.args.pretrainedmodel, use_fast=True, add_prefix_space=True)
-        tropes = sorted(dataset_df["trope"].unique())
-        definitions = [tropes_df.loc[trope, "definition"] for trope in tropes]
-        trope_token_ids = (tokenizer(definitions, padding="max_length", truncation=True, return_tensors="pt")
-                           .input_ids).cuda()
-
-        print("\n")
+        logging.info("initializing optimizer")
+        parameters = [{"params": itertools.chain(model.parameters(), classifier.parameters()), "lr": self.args.lr},
+                      {"params": encoder.parameters(), "lr": self.args.elr}]
+        optimizer = AdamW(parameters)
 
         # train model
-        if self.args.inputtype == "story":
-            print("input-type = story")
-            if self.args.labeldependent:
-                print("model-type = label-dependent\n\n")
-                story_label_dependent_trainer.train(model, classifier, optimizer, dataset_df, character_movie_map_df,
-                                                    tropes, trope_token_ids, tensors_dir, self.args.nepochs,
-                                                    self.args.ntropesbatch)
+        if self.args.input == "story":
+            logging.info("input = story")
+            if self.args.lbl:
+                logging.info("model = label-dependent\n")
+                story_label_dependent_trainer.train(encoder,
+                                                    model,
+                                                    classifier,
+                                                    optimizer,
+                                                    dataset_df,
+                                                    character_movie_map_df,
+                                                    tropes,
+                                                    trope_embeddings,
+                                                    tensors_dir,
+                                                    self.args.ep,
+                                                    1000 * self.args.tokbatch,
+                                                    self.args.trpbatch)
