@@ -7,6 +7,7 @@ import os
 import random
 import torch
 import tqdm
+from absl import logging
 
 class Chatter:
 
@@ -15,21 +16,27 @@ class Chatter:
                                 how="left", on="character")
         imdbid_and_charactername_to_characterid = {}
         characterid_to_imdbids = collections.defaultdict(set)
+        imdbid_to_characterids = collections.defaultdict(set)
         characterid_and_trope_to_label = {}
 
         for characterid, imdbid, name in (character_movie_map_df[["character", "imdb-id", "name"]]
                                           .itertuples(index=False, name=None)):
             imdbid_and_charactername_to_characterid[(imdbid, name)] = characterid
             characterid_to_imdbids[characterid].add(imdbid)
+            imdbid_to_characterids[imdbid].add(characterid)
 
-        for characterid, trope, tvtropelabel, label in (data_df[["character", "trope", "tvtrope-label", "label"]]
-                                                        .itertuples(index=False, name=None)):
-            characterid_and_trope_to_label[(characterid, trope)] = label if pd.notna(label) else tvtropelabel
+        for characterid, trope, tvtrope_label, label in (data_df[["character", "trope", "tvtrope-label", "label"]]
+                                                         .itertuples(index=False, name=None)):
+            if pd.notna(label):
+                characterid_and_trope_to_label[(characterid, trope)] = label
+            else:
+                characterid_and_trope_to_label[(characterid, trope)] = tvtrope_label
 
         self.data_df = data_df
         self.map_df = character_movie_map_df
         self.imdbid_and_charactername_to_characterid = imdbid_and_charactername_to_characterid
         self.characterid_to_imdbids = self.sort_dictionary(characterid_to_imdbids)
+        self.imdbid_to_characterids = self.sort_dictionary(imdbid_to_characterids)
         self.characterid_and_trope_to_label = characterid_and_trope_to_label
 
     def sort_dictionary(self, dictionary):
@@ -42,131 +49,137 @@ class Chatter:
             movie_dir = os.path.join(tensors_dir, imdbid)
             characters_file = os.path.join(movie_dir, "characters.txt")
             token_ids_file = os.path.join(movie_dir, "token-ids.pt")
-            names_mask_file = os.path.join(movie_dir, "names-mask.pt")
-            mentions_mask_file = os.path.join(movie_dir, "mentions-mask.pt")
-            utterances_mask_file = os.path.join(movie_dir, "utterances-mask.pt")
+            names_idx_file = os.path.join(movie_dir, "names-mask.pt")
+            mentions_idx_file = os.path.join(movie_dir, "mentions-mask.pt")
+            utterances_idx_file = os.path.join(movie_dir, "utterances-mask.pt")
             mention_character_ids_file = os.path.join(movie_dir, "mention-character-ids.pt")
             utterance_character_ids_file = os.path.join(movie_dir, "utterance-character-ids.pt")
             characternames = open(characters_file).read().split("\n")
             characterids = [self.imdbid_and_charactername_to_characterid[(imdbid, name)] for name in characternames]
             token_ids = torch.load(token_ids_file, weights_only=True).cuda()
-            names_mask = torch.load(names_mask_file, weights_only=True).cuda()
-            mentions_mask = torch.load(mentions_mask_file, weights_only=True).cuda()
-            utterances_mask = torch.load(utterances_mask_file, weights_only=True).cuda()
+            names_idx = torch.load(names_idx_file, weights_only=True).cuda()
+            mentions_idx = torch.load(mentions_idx_file, weights_only=True).cuda()
+            utterances_idx = torch.load(utterances_idx_file, weights_only=True).cuda()
             mention_character_ids = torch.load(mention_character_ids_file, weights_only=True).cuda()
             utterance_character_ids = torch.load(utterance_character_ids_file, weights_only=True).cuda()
             imdbid_to_tensors[imdbid] = {"character-ids": characterids,
                                          "token-ids": token_ids,
-                                         "names-mask": names_mask,
-                                         "mentions-mask": mentions_mask,
-                                         "utterances-mask": utterances_mask,
+                                         "names-idx": names_idx,
+                                         "mentions-idx": mentions_idx,
+                                         "utterances-idx": utterances_idx,
                                          "mentions-character-ids": mention_character_ids,
                                          "utterances-character-ids": utterance_character_ids,
                                          }
         return imdbid_to_tensors
 
-    def batch_components(self, max_ntropes_per_component):
-        self.componentid_to_characterids_and_tropes = {}
-        componentids_arr = []
-        s = 0
-        random.seed(12)
+    def tensorshape(self, tensor):
+        return "[" + ",".join(f"{d:5d}" for d in tensor.shape) + "]"
 
-        for partition in ["train", "dev", "test"]:
-            batchcomponentid_to_characterids_and_tropes = collections.defaultdict(set)
-            componentid_to_characterids_and_tropes = {}
-            componentids = self.data_df.loc[self.data_df["partition"] == partition, "component"].unique()
-            componentid_to_tropes = {}
-            component_ntropes = []
+    def batch_movies(self, imdbid_to_tensors, max_n_tokens):
+        n_seq_tokens = next(iter(imdbid_to_tensors.values()))["token-ids"].shape[1]
+        max_n_seqs = math.ceil(max_n_tokens / n_seq_tokens)
+        logging.info(f"number of sequence tokens = {n_seq_tokens}")
+        logging.info(f"maximum number of sequences per batch = {max_n_seqs}")
 
-            for componentid, cdf in self.data_df[self.data_df["partition"] == partition].groupby("component"):
-                componentid_to_characterids_and_tropes[componentid] = set(
-                    cdf[["character", "trope"]].itertuples(index=False, name=None))
+        characterid_to_batch_imdbids = collections.defaultdict(set)
+        batch_imdbid_to_characterids = collections.defaultdict(set)
+        batch_imdbid_to_tensors = {}
 
-            for componentid in componentids:
-                tropes = set([trope for _, trope in componentid_to_characterids_and_tropes[componentid]])
-                componentid_to_tropes[componentid] = sorted(tropes)
-                component_ntropes.append(len(tropes))
+        n_missing_batch_mentions = 0
+        n_missing_batch_utterances = 0
 
-            component_ntropes = np.array(component_ntropes)
-            sortindex = np.argsort(component_ntropes)
-            componentids = componentids[sortindex]
-            component_ntropes = component_ntropes[sortindex]
+        for imdbid, tensors_dict in tqdm.tqdm(imdbid_to_tensors.items(), desc="batching movies", unit="movie"):
+            n_seqs = tensors_dict["token-ids"].shape[0]
+            n_batches = math.ceil(n_seqs / max_n_seqs)
 
-            i = 0
-            while i < len(componentids):
-                if component_ntropes[i] <= max_ntropes_per_component:
-                    j = i + 1
-                    while j < len(componentids) and component_ntropes[i: j + 1].sum() <= max_ntropes_per_component:
-                        j += 1
-                    batchcomponentid = "D" + str(s).zfill(4)
-                    for componentid in componentids[i: j]:
-                        batchcomponentid_to_characterids_and_tropes[batchcomponentid].update(
-                            componentid_to_characterids_and_tropes[componentid])
-                    s += 1
-                    i = j
+            character_ids = tensors_dict["character-ids"]
+            token_ids = tensors_dict["token-ids"]
+            names_idx = tensors_dict["names-idx"]
+            mentions_idx = tensors_dict["mentions-idx"]
+            utterances_idx = tensors_dict["utterances-idx"]
+            mention_character_ids = tensors_dict["mentions-character-ids"]
+            utterance_character_ids = tensors_dict["utterances-character-ids"]
+
+            n_batch_mentions = 0
+            n_batch_utterances = 0
+
+            for i in range(n_batches):
+                batch_imdbid = f"{imdbid}-{i}"
+                batch_character_ids = character_ids
+                batch_token_ids = token_ids[i * max_n_seqs : (i + 1) * max_n_seqs]
+                batch_names_idx = names_idx
+
+                if mentions_idx.nelement() > 0:
+                    batch_mentions_mask = ((mentions_idx[:,0] >= i * max_n_seqs)
+                                        & (mentions_idx[:,1] <= (i + 1) * max_n_seqs))
+                    batch_mentions_idx = mentions_idx[batch_mentions_mask] - (i * max_n_seqs)
+                    batch_mention_character_ids = mention_character_ids[batch_mentions_mask]
                 else:
-                    nsubcomponents = math.ceil(component_ntropes[i]/max_ntropes_per_component)
-                    subcomponent_ntropes = math.ceil(component_ntropes[i]/nsubcomponents)
-                    tropes = sorted(componentid_to_tropes[componentids[i]])
-                    random.shuffle(tropes)
-                    for j in range(nsubcomponents):
-                        subcomponent_tropes = tropes[j * subcomponent_ntropes: (j + 1) * subcomponent_ntropes]
-                        batchcomponentid = "D" + str(s).zfill(4)
-                        batchcomponentid_to_characterids_and_tropes[batchcomponentid] = set(
-                            [(characterid, trope)
-                            for characterid, trope in componentid_to_characterids_and_tropes[componentids[i]]
-                                if trope in subcomponent_tropes])
-                        s += 1
-                    i += 1
-            assert (sum([len(characterids_and_tropes)
-                        for characterids_and_tropes in batchcomponentid_to_characterids_and_tropes.values()])
-                        == (self.data_df["partition"] == partition).sum())
+                    batch_mentions_idx = mentions_idx
+                    batch_mention_character_ids = mention_character_ids
+                n_batch_mentions += len(batch_mentions_idx)
 
-            batchcomponent_ncharacters = []
-            batchcomponent_ntropes = []
-            batchcomponent_nmovies = []
-            batchcomponent_embeddingsizes = []
-            batchcomponent_ncharacters_and_tropes = []
-            batchcomponent_percentage_positive = []
+                if utterances_idx.nelement() > 0:
+                    batch_utterances_mask = ((utterances_idx[:,0] >= i * max_n_seqs)
+                                            & (utterances_idx[:,1] <= (i + 1) * max_n_seqs))
+                    batch_utterances_idx = utterances_idx[batch_utterances_mask] - (i * max_n_seqs)
+                    batch_utterance_character_ids = utterance_character_ids[batch_utterances_mask]
+                else:
+                    batch_utterances_idx = utterances_idx
+                    batch_utterance_character_ids = utterance_character_ids
+                n_batch_utterances += len(batch_utterances_idx)
 
-            for characterids_and_tropes in batchcomponentid_to_characterids_and_tropes.values():
-                characterids = set()
-                tropes = set()
-                imdbids = set()
-                npositive = 0
-                for characterid, trope in characterids_and_tropes:
-                    characterids.add(characterid)
-                    tropes.add(trope)
-                    imdbids.update(self.characterid_to_imdbids[characterid])
-                    npositive += self.characterid_and_trope_to_label[(characterid, trope)] == 1
-                batchcomponent_ncharacters.append(len(characterids))
-                batchcomponent_ntropes.append(len(tropes))
-                batchcomponent_nmovies.append(len(imdbids))
-                batchcomponent_embeddingsizes.append(len(characterids) * len(tropes) * len(imdbids))
-                batchcomponent_ncharacters_and_tropes.append(len(characterids_and_tropes))
-                batchcomponent_percentage_positive.append(100*npositive/len(characterids_and_tropes))
-            print(f"{partition}: {len(batchcomponentid_to_characterids_and_tropes)} batches\n"
-                    f"\tcharacters ~ {np.mean(batchcomponent_ncharacters):.1f} "
-                    f"({np.std(batchcomponent_ncharacters):.2f}) "
-                    f"[{min(batchcomponent_ncharacters)}, {max(batchcomponent_ncharacters)}]\n"
-                    f"\ttropes ~ {np.mean(batchcomponent_ntropes):.1f} "
-                    f"({np.std(batchcomponent_ntropes):.2f}) "
-                    f"[{min(batchcomponent_ntropes)}, {max(batchcomponent_ntropes)}]\n"
-                    f"\tmovies ~ {np.mean(batchcomponent_nmovies):.1f} "
-                    f"({np.std(batchcomponent_nmovies):.2f}) "
-                    f"[{min(batchcomponent_nmovies)}, {max(batchcomponent_nmovies)}]\n"
-                    f"\tembedding-size ~ {np.mean(batchcomponent_embeddingsizes):.1f} "
-                    f"({np.std(batchcomponent_embeddingsizes):.2f}) "
-                    f"[{min(batchcomponent_embeddingsizes)}, {max(batchcomponent_embeddingsizes)}]\n"
-                    f"\tsamples ~ {np.mean(batchcomponent_ncharacters_and_tropes):.1f} "
-                    f"({np.std(batchcomponent_ncharacters_and_tropes):.2f}) "
-                    f"[{min(batchcomponent_ncharacters_and_tropes)}, {max(batchcomponent_ncharacters_and_tropes)}]\n"
-                    f"\t%+ve/batch ~ {np.mean(batchcomponent_percentage_positive):.1f} "
-                    f"({np.std(batchcomponent_percentage_positive):.2f}) "
-                    f"[{min(batchcomponent_percentage_positive):.1f}, {max(batchcomponent_percentage_positive):.1f}]\n"
-                    )
-            self.componentid_to_characterids_and_tropes.update(dict(batchcomponentid_to_characterids_and_tropes))
-            componentids_arr.append(sorted(batchcomponentid_to_characterids_and_tropes.keys()))
+                for characterid in self.imdbid_to_characterids[imdbid]:
+                    characterid_to_batch_imdbids[characterid].add(batch_imdbid)
+                    batch_imdbid_to_characterids[batch_imdbid].add(characterid)
 
-        self.componentid_to_characterids_and_tropes = self.sort_dictionary(self.componentid_to_characterids_and_tropes)
-        self.train_componentids, self.dev_componentids, self.test_componentids = componentids_arr
+                batch_imdbid_to_tensors[batch_imdbid] = {"character-ids": batch_character_ids,
+                                                         "token-ids": batch_token_ids,
+                                                         "names-idx": batch_names_idx,
+                                                         "mentions-idx": batch_mentions_idx,
+                                                         "utterances-idx": batch_utterances_idx,
+                                                         "mentions-character-ids": batch_mention_character_ids,
+                                                         "utterances-character-ids": batch_utterance_character_ids}
+            n_missing_batch_mentions += len(mentions_idx) - n_batch_mentions
+            n_missing_batch_utterances += len(utterances_idx) - n_batch_utterances
+
+        logging.info(f"{n_missing_batch_mentions} mentions missed in batches")
+        logging.info(f"{n_missing_batch_utterances} utterances missed in batches")
+
+        self.batch_imdbid_to_characterids = self.sort_dictionary(batch_imdbid_to_characterids)
+        self.characterid_to_batch_imdbids = self.sort_dictionary(characterid_to_batch_imdbids)
+
+        trn_batch_imdbid_to_tropes = collections.defaultdict(set)
+        dev_batch_imdbid_to_tropes = collections.defaultdict(set)
+        tst_batch_imdbid_to_tropes = collections.defaultdict(set)
+        trn_batch_imdbids = set()
+        dev_batch_imdbids = set()
+        tst_batch_imdbids = set()
+
+        for characterid, trope, partition in (self.data_df[["character", "trope", "partition"]]
+                                              .itertuples(index=False, name=None)):
+            if partition == "train":
+                batch_imdbids = self.characterid_to_batch_imdbids[characterid]
+                for batch_imdbid in batch_imdbids:
+                    trn_batch_imdbid_to_tropes[batch_imdbid].add(trope)
+                trn_batch_imdbids.update(batch_imdbids)
+            elif partition == "dev":
+                batch_imdbids = self.characterid_to_batch_imdbids[characterid]
+                for batch_imdbid in batch_imdbids:
+                    dev_batch_imdbid_to_tropes[batch_imdbid].add(trope)
+                dev_batch_imdbids.update(batch_imdbids)
+            elif partition == "test":
+                batch_imdbids = self.characterid_to_batch_imdbids[characterid]
+                for batch_imdbid in batch_imdbids:
+                    tst_batch_imdbid_to_tropes[batch_imdbid].add(trope)
+                tst_batch_imdbids.update(batch_imdbids)
+
+        self.trn_batch_imdbid_to_tropes = self.sort_dictionary(trn_batch_imdbid_to_tropes)
+        self.dev_batch_imdbid_to_tropes = self.sort_dictionary(dev_batch_imdbid_to_tropes)
+        self.tst_batch_imdbid_to_tropes = self.sort_dictionary(tst_batch_imdbid_to_tropes)
+        self.trn_batch_imdbids = sorted(trn_batch_imdbids)
+        self.dev_batch_imdbids = sorted(dev_batch_imdbids)
+        self.tst_batch_imdbids = sorted(tst_batch_imdbids)
+        logging.info(f"{len(self.trn_batch_imdbids)} train batches")
+
+        return batch_imdbid_to_tensors
