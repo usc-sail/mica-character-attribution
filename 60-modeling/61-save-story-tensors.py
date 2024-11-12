@@ -56,22 +56,22 @@ def save_story_tensors(_):
             imdb_ids, imdb_characters_arr, segments_dfs, mentions_dfs, utterances_dfs)):
         logging.info(f"{i + 1:3d}/{len(imdb_ids)}\nimdb-id = {imdb_id}")
         try:
-            (token_ids, mentions_mask, utterances_mask, names_mask, mention_character_ids, utterance_character_ids) = (
+            (token_ids, mentions_idx, utterances_idx, names_idx, mention_character_ids, utterance_character_ids) = (
                 tensorize.create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df))
             imdb_tensors_dir = os.path.join(tensorsdir, imdb_id)
             os.makedirs(imdb_tensors_dir, exist_ok=True)
             torch.save(token_ids, os.path.join(imdb_tensors_dir, "token-ids.pt"))
-            torch.save(mentions_mask, os.path.join(imdb_tensors_dir, "mentions-mask.pt"))
-            torch.save(utterances_mask, os.path.join(imdb_tensors_dir, "utterances-mask.pt"))
-            torch.save(names_mask, os.path.join(imdb_tensors_dir, "names-mask.pt"))
+            torch.save(mentions_idx, os.path.join(imdb_tensors_dir, "mentions-idx.pt"))
+            torch.save(utterances_idx, os.path.join(imdb_tensors_dir, "utterances-idx.pt"))
+            torch.save(names_idx, os.path.join(imdb_tensors_dir, "names-idx.pt"))
             torch.save(mention_character_ids, os.path.join(imdb_tensors_dir, "mention-character-ids.pt"))
             torch.save(utterance_character_ids, os.path.join(imdb_tensors_dir, "utterance-character-ids.pt"))
             with open(os.path.join(imdb_tensors_dir, "characters.txt"), "w") as fw:
                 fw.write("\n".join(imdb_characters))
             logging.info(f"token-ids = {tuple(token_ids.shape)}")
-            logging.info(f"names-mask = {tuple(names_mask.shape)}")
-            logging.info(f"mentions-mask = {tuple(mentions_mask.shape)}")
-            logging.info(f"utterances-mask = {tuple(utterances_mask.shape)}")
+            logging.info(f"names-idx = {tuple(names_idx.shape)}")
+            logging.info(f"mentions-idx = {tuple(mentions_idx.shape)}")
+            logging.info(f"utterances-idx = {tuple(utterances_idx.shape)}")
             logging.info(f"mention-character-ids = {tuple(mention_character_ids.shape)}")
             logging.info(f"utterance-character-ids = {tuple(utterance_character_ids.shape)}")
         except Exception as e:
