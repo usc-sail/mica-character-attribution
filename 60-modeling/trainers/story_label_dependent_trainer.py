@@ -1,5 +1,5 @@
 """Train and evaluate the label dependent model on full story"""
-import evaluation
+from eval.evaluation import evaluate
 from dataloaders.data import Chatter
 from absl import logging
 
@@ -8,6 +8,8 @@ import math
 import time
 import tqdm
 import torch
+import random
+from torch import autograd
 import numpy as np
 from torch.nn import BCEWithLogitsLoss
 
@@ -18,7 +20,6 @@ def run(encoder,
         batch_imdbid,
         chatter:Chatter,
         batch_imdbid_to_tensors,
-        tropes,
         trope_embeddings,
         trope_to_idx,
         loss_function,
@@ -34,7 +35,7 @@ def run(encoder,
     n_subbatches = math.ceil(len(batch_tropes) / max_tropes_per_batch)
     logits_dict = collections.defaultdict(set)
     for i in range(n_subbatches):
-        subbatch_tropes = tropes[i * max_tropes_per_batch: (i + 1) * max_tropes_per_batch]
+        subbatch_tropes = batch_tropes[i * max_tropes_per_batch: (i + 1) * max_tropes_per_batch]
         subbatch_tropes_idx = [trope_to_idx[trope] for trope in subbatch_tropes]
         subbatch_trope_embeddings = trope_embeddings[subbatch_tropes_idx]
         tensors = batch_imdbid_to_tensors[batch_imdbid]
@@ -80,7 +81,8 @@ def train(encoder,
           tensors_dir,
           n_epochs,
           max_tokens_per_batch,
-          max_tropes_per_batch):
+          max_tropes_per_batch,
+          max_grad_norm):
     logging.info("initializing CHATTER data")
     chatter = Chatter(data_df, character_movie_map_df)
     trope_to_idx = {trope:i for i, trope in enumerate(tropes)}
@@ -110,17 +112,16 @@ def train(encoder,
             optimizer.zero_grad()
             batch_imdbid = chatter.trn_batch_imdbids[i]
             for loss, _ in run(encoder,
-                               model,
-                               classifier,
-                               "train",
-                               batch_imdbid,
-                               chatter,
-                               batch_imdbid_to_tensors,
-                               tropes,
-                               trope_embeddings,
-                               trope_to_idx,
-                               loss_function,
-                               max_tropes_per_batch):
+                            model,
+                            classifier,
+                            "train",
+                            batch_imdbid,
+                            chatter,
+                            batch_imdbid_to_tensors,
+                            trope_embeddings,
+                            trope_to_idx,
+                            loss_function,
+                            max_tropes_per_batch):
                 loss.backward()
                 optimizer.step()
                 train_loss_arr.append(loss.item())
@@ -146,7 +147,6 @@ def train(encoder,
                                              batch_imdbid,
                                              chatter,
                                              batch_imdbid_to_tensors,
-                                             tropes,
                                              trope_embeddings,
                                              trope_to_idx,
                                              loss_function,
@@ -161,8 +161,9 @@ def train(encoder,
         for key, vals in valid_logits_dict.items():
             valid_labels.append(chatter.characterid_and_trope_to_label[key])
             valid_logits.append(max(vals))
-        evaluation.evaluate(valid_logits, valid_labels)
-        accuracy, precision, recall, f1 = evaluation.evaluate(valid_logits, valid_labels)
+        valid_logits = np.array(valid_logits)
+        valid_labels = np.array(valid_labels)
+        accuracy, precision, recall, f1 = evaluate(valid_logits, valid_labels)
         avg_valid_loss = np.mean(valid_loss_arr)
         logging.info(f"avg-valid-loss = {avg_valid_loss:.4f} acc = {accuracy:.1f}, "
                      f"precision = {precision:.1f}, recall = {recall:.1f}, f1 = {f1:.1f}")
