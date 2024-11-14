@@ -23,7 +23,7 @@ class LabelDependent(nn.Module):
         =====
             story_embeddings = [n_blocks, sequence_length, hidden_size]
             label_embeddings = [n_labels, hidden_size]
-            names_mask = [n_characters, n_blocks, sequence_length]
+            names_mask = [n_characters, sequence_length]
 
         Output
         ======
@@ -32,7 +32,7 @@ class LabelDependent(nn.Module):
         names_score = self.name_weights(story_embeddings).squeeze(dim=2)
         # names_score = [n_blocks, seqlen]
 
-        names_attn = torch.softmax(names_score.unsqueeze(dim=0) + names_mask, dim=2)
+        names_attn = torch.softmax(names_score.unsqueeze(dim=0) * names_mask.unsqueeze(dim=1), dim=2)
         # names_attn = [n_characters, n_blocks, seqlen]
 
         names_embeddings = torch.bmm(names_attn.permute(1, 0, 2), story_embeddings).permute(1, 0, 2)
@@ -79,7 +79,7 @@ class LabelDependent(nn.Module):
         mentions_score = self.mentions_weights(story_embeddings)
         # mentions_score = [total_seqlen, 1]
 
-        mentions_attn = torch.softmax(mentions_mask + mentions_score.T, dim=1)
+        mentions_attn = torch.softmax(mentions_mask * mentions_score.T, dim=1)
         # mentions_attn = [n_mentions, total_seqlen]
 
         mentions_embeddings = torch.mm(mentions_attn, story_embeddings)
@@ -89,10 +89,10 @@ class LabelDependent(nn.Module):
         # mention_label_score = [n_mentions, n_labels]
 
         device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
         # device where model is stored
 
-        mention_label_embeddings = torch.zeros((n_characters, n_labels, hidden_size), device=device,
-                                               dtype=torch.float32)
+        mention_label_embeddings = torch.zeros((n_characters, n_labels, hidden_size), device=device, dtype=dtype)
         # initialize mention_label_embeddings = [n_characters, n_labels, hidden_size]
 
         for i in mention_character_ids.unique():
@@ -127,7 +127,7 @@ class LabelDependent(nn.Module):
 
         Output
         ======
-            utterance_embeddins = [n_characters, n_labels, hidden_size]
+            utterance_embeddings = [n_characters, n_labels, hidden_size]
         """
         n_blocks, seqlen, hidden_size = story_embeddings.shape
         total_seqlen = n_blocks * seqlen
@@ -137,7 +137,7 @@ class LabelDependent(nn.Module):
         score = torch.mm(label_embeddings, story_embeddings.T)
         # score = [n_labels, total_seqlen]
 
-        attn = torch.softmax(utterances_mask.unsqueeze(dim=1) + score.unsqueeze(dim=0), dim=2).nan_to_num(0)
+        attn = torch.softmax(utterances_mask.unsqueeze(dim=1) * score.unsqueeze(dim=0), dim=2)
         # attn = [n_characters, n_labels, total_seqlen]
 
         utterance_embeddings = torch.matmul(attn, story_embeddings.unsqueeze(dim=0))
@@ -177,11 +177,10 @@ class LabelDependent(nn.Module):
         mask = torch.zeros((n_characters, 3), device=device)
         mask[:, 0] = 1
         mask[mention_character_ids.unique(), 1] = 1
-        mask[(utterances_mask == 0).any(dim=1), 2] = 1
-        mask = torch.log(mask)
+        mask[utterances_mask.any(dim=1), 2] = 1
         # mask = [n_characters, 3]
 
-        attn = torch.softmax(score + mask.unsqueeze(dim=1), dim=2)
+        attn = torch.softmax(score * mask.unsqueeze(dim=1), dim=2)
         # attn = [n_characters, n_labels, 3]
 
         character_embeddings = torch.matmul(attn.unsqueeze(dim=2), embeddings).squeeze(dim=2)
@@ -218,38 +217,40 @@ class LabelDependent(nn.Module):
         """
         n_blocks, seqlen, _ = story_embeddings.shape
         n_characters = len(names_idx)
-        device=next(self.parameters()).device
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
 
-        sequence = torch.arange(n_blocks * seqlen, device=device).reshape(1, -1)
-        names_mask = torch.log((names_idx[:, 0].view(-1, 1) <= sequence) & (names_idx[:, 1].view(-1, 1) > sequence))
-        names_mask = names_mask.reshape(n_characters, n_blocks, seqlen)
-        # names_mask = [n_characters, n_blocks, seqlen]
+        sequence = torch.arange(seqlen, device=device, dtype=dtype).reshape(1, -1)
+        names_mask = (names_idx[:, 0].view(-1, 1) <= sequence) & (names_idx[:, 1].view(-1, 1) > sequence)
+        names_mask = names_mask.reshape(n_characters, seqlen)
+        # names_mask = [n_characters, seqlen]
 
+        storysequence = torch.arange(n_blocks * seqlen, device=device, dtype=dtype).reshape(1, -1)
         mentions_idx = mentions_idx.reshape(-1, 2)
-        mentions_mask = torch.log((mentions_idx[:, 0].view(-1, 1) <= sequence)
-                                  & (mentions_idx[:, 1].view(-1, 1) > sequence))
+        mentions_mask = ((mentions_idx[:, 0].view(-1, 1) <= storysequence)
+                         & (mentions_idx[:, 1].view(-1, 1) > storysequence))
         # mentions_mask = [n_mentions, n_blocks x seqlen]
 
-        utterances_mask_exp = torch.zeros((n_characters, n_blocks * seqlen), dtype=torch.float32, device=device)
+        utterances_mask = torch.zeros((n_characters, n_blocks * seqlen), dtype=dtype, device=device)
         utterances_idx = utterances_idx.reshape(-1, 2)
-        utterances_mask = ((utterances_idx[:, 0].view(-1, 1) <= sequence)
-                           & (utterances_idx[:, 1].view(-1, 1) > sequence))
-        # utterances_mask = [n_utterances, n_blocks x seqlen]
+        utterances_mask_exp = ((utterances_idx[:, 0].view(-1, 1) <= storysequence)
+                               & (utterances_idx[:, 1].view(-1, 1) > storysequence))
+        # utterances_mask_exp = [n_utterances, n_blocks x seqlen]
         for i in utterances_character_ids.unique():
-            utterances_mask_exp[i] = utterances_mask[utterances_character_ids == i].sum()
-        utterances_mask = torch.log(utterances_mask_exp)
+            utterances_mask[i] = utterances_mask_exp[utterances_character_ids == i].any(dim=0)
+        # utterances_mask = [n_characters, n_blocks x seqlen]
 
         name_label_embeddings = self.name_representation(story_embeddings, label_embeddings, names_mask)
         # name_label_embeddins = [n_characters, n_labels, hidden_size]
 
-        mention_label_embeddins = self.mention_representation(n_characters, story_embeddings, label_embeddings,
+        mention_label_embeddings = self.mention_representation(n_characters, story_embeddings, label_embeddings,
                                                               mentions_mask, mention_character_ids)
         # mention_label_embeddings = [n_characters, n_labels, hidden_size]
 
         utterance_label_embeddings = self.utterance_representation(story_embeddings, label_embeddings, utterances_mask)
         # utterance_label_embeddings = [n_characters, n_labels, hidden_size]
 
-        character_embeddings = self.combine_embeddings(name_label_embeddings, mention_label_embeddins,
+        character_embeddings = self.combine_embeddings(name_label_embeddings, mention_label_embeddings,
                                                        utterance_label_embeddings, mention_character_ids,
                                                        utterances_mask)
         # character_embeddings = [n_characters, n_labels, hidden_size]
