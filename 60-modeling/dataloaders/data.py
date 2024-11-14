@@ -49,9 +49,9 @@ class Chatter:
             movie_dir = os.path.join(tensors_dir, imdbid)
             characters_file = os.path.join(movie_dir, "characters.txt")
             token_ids_file = os.path.join(movie_dir, "token-ids.pt")
-            names_idx_file = os.path.join(movie_dir, "names-mask.pt")
-            mentions_idx_file = os.path.join(movie_dir, "mentions-mask.pt")
-            utterances_idx_file = os.path.join(movie_dir, "utterances-mask.pt")
+            names_idx_file = os.path.join(movie_dir, "names-idx.pt")
+            mentions_idx_file = os.path.join(movie_dir, "mentions-idx.pt")
+            utterances_idx_file = os.path.join(movie_dir, "utterances-idx.pt")
             mention_character_ids_file = os.path.join(movie_dir, "mention-character-ids.pt")
             utterance_character_ids_file = os.path.join(movie_dir, "utterance-character-ids.pt")
             characternames = open(characters_file).read().split("\n")
@@ -110,9 +110,9 @@ class Chatter:
                 batch_names_idx = names_idx
 
                 if mentions_idx.nelement() > 0:
-                    batch_mentions_mask = ((mentions_idx[:,0] >= i * max_n_seqs)
-                                        & (mentions_idx[:,1] <= (i + 1) * max_n_seqs))
-                    batch_mentions_idx = mentions_idx[batch_mentions_mask] - (i * max_n_seqs)
+                    batch_mentions_mask = ((mentions_idx[:,0] >= i * max_n_seqs * n_seq_tokens)
+                                           & (mentions_idx[:,1] <= (i + 1) * max_n_seqs * n_seq_tokens))
+                    batch_mentions_idx = mentions_idx[batch_mentions_mask] - (i * max_n_seqs * n_seq_tokens)
                     batch_mention_character_ids = mention_character_ids[batch_mentions_mask]
                 else:
                     batch_mentions_idx = mentions_idx
@@ -120,9 +120,9 @@ class Chatter:
                 n_batch_mentions += len(batch_mentions_idx)
 
                 if utterances_idx.nelement() > 0:
-                    batch_utterances_mask = ((utterances_idx[:,0] >= i * max_n_seqs)
-                                            & (utterances_idx[:,1] <= (i + 1) * max_n_seqs))
-                    batch_utterances_idx = utterances_idx[batch_utterances_mask] - (i * max_n_seqs)
+                    batch_utterances_mask = ((utterances_idx[:,0] >= i * max_n_seqs * n_seq_tokens)
+                                             & (utterances_idx[:,1] <= (i + 1) * max_n_seqs * n_seq_tokens))
+                    batch_utterances_idx = utterances_idx[batch_utterances_mask] - (i * max_n_seqs * n_seq_tokens)
                     batch_utterance_character_ids = utterance_character_ids[batch_utterances_mask]
                 else:
                     batch_utterances_idx = utterances_idx
