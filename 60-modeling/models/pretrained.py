@@ -14,9 +14,9 @@ class Tokenizer:
 class Model:
 
     def roberta():
-        return AutoModel.from_pretrained("roberta-base")
+        return AutoModel.from_pretrained("roberta-base", add_pooling_layer=False)
 
     def longformer(attnwindow: int):
         config = AutoConfig.from_pretrained("allenai/longformer-base-4096")
         config.attention_window = attnwindow
-        return AutoModel.from_pretrained("allenai/longformer-base-4096", config=config)
+        return AutoModel.from_pretrained("allenai/longformer-base-4096", config=config, add_pooling_layer=False)
