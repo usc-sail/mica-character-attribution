@@ -81,7 +81,7 @@ class Trainer:
         logging.info("initializing optimizer")
         parameters = [{"params": itertools.chain(model.parameters(), classifier.parameters()), "lr": self.args.lr},
                       {"params": encoder.parameters(), "lr": self.args.elr}]
-        optimizer = AdamW(parameters)
+        optimizer = AdamW(parameters, weight_decay=self.args.decay)
 
         # train model
         if self.args.input == "story":
@@ -99,4 +99,5 @@ class Trainer:
                                                     tensors_dir,
                                                     self.args.ep,
                                                     1000 * self.args.tokbatch,
-                                                    self.args.trpbatch)
+                                                    self.args.trpbatch,
+                                                    self.args.gradnorm)
