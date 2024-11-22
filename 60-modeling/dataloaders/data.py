@@ -155,6 +155,15 @@ class Chatter:
         trn_batch_imdbids = set()
         dev_batch_imdbids = set()
         tst_batch_imdbids = set()
+        trn_batch_imdbid_to_nsamples = collections.defaultdict(int)
+        trn_characterid_to_batch_imdbids = collections.defaultdict(set)
+        trn_characterid_and_trope_to_nbatch_imdbids = collections.defaultdict(int)
+        dev_batch_imdbid_to_nsamples = collections.defaultdict(int)
+        dev_characterid_to_batch_imdbids = collections.defaultdict(set)
+        dev_characterid_and_trope_to_nbatch_imdbids = collections.defaultdict(int)
+        tst_batch_imdbid_to_nsamples = collections.defaultdict(int)
+        tst_characterid_to_batch_imdbids = collections.defaultdict(set)
+        tst_characterid_and_trope_to_nbatch_imdbids = collections.defaultdict(int)
 
         for characterid, trope, partition in (self.data_df[["character", "trope", "partition"]]
                                               .itertuples(index=False, name=None)):
@@ -162,16 +171,25 @@ class Chatter:
                 batch_imdbids = self.characterid_to_batch_imdbids[characterid]
                 for batch_imdbid in batch_imdbids:
                     trn_batch_imdbid_to_tropes[batch_imdbid].add(trope)
+                    trn_batch_imdbid_to_nsamples[batch_imdbid] += 1
+                    trn_characterid_to_batch_imdbids[characterid].add(batch_imdbid)
+                    trn_characterid_and_trope_to_nbatch_imdbids[(characterid, trope)] += 1
                 trn_batch_imdbids.update(batch_imdbids)
             elif partition == "dev":
                 batch_imdbids = self.characterid_to_batch_imdbids[characterid]
                 for batch_imdbid in batch_imdbids:
                     dev_batch_imdbid_to_tropes[batch_imdbid].add(trope)
+                    dev_batch_imdbid_to_nsamples[batch_imdbid] += 1
+                    dev_characterid_to_batch_imdbids[characterid].add(batch_imdbid)
+                    dev_characterid_and_trope_to_nbatch_imdbids[(characterid, trope)] += 1
                 dev_batch_imdbids.update(batch_imdbids)
             elif partition == "test":
                 batch_imdbids = self.characterid_to_batch_imdbids[characterid]
                 for batch_imdbid in batch_imdbids:
                     tst_batch_imdbid_to_tropes[batch_imdbid].add(trope)
+                    tst_batch_imdbid_to_nsamples[batch_imdbid] += 1
+                    tst_characterid_to_batch_imdbids[characterid].add(batch_imdbid)
+                    tst_characterid_and_trope_to_nbatch_imdbids[(characterid, trope)] += 1
                 tst_batch_imdbids.update(batch_imdbids)
 
         self.trn_batch_imdbid_to_tropes = self.sort_dictionary(trn_batch_imdbid_to_tropes)
@@ -180,6 +198,101 @@ class Chatter:
         self.trn_batch_imdbids = sorted(trn_batch_imdbids)
         self.dev_batch_imdbids = sorted(dev_batch_imdbids)
         self.tst_batch_imdbids = sorted(tst_batch_imdbids)
-        logging.info(f"{len(self.trn_batch_imdbids)} train batches")
+
+        n_batches = len(trn_batch_imdbids)
+        avg_nsamples_per_batch_imdbid = np.mean(list(trn_batch_imdbid_to_nsamples.values()))
+        n_characterids = len(trn_characterid_to_batch_imdbids)
+        n_characterids_one_batch_imdbid = sum([len(batch_imdbids) == 1
+                                               for batch_imdbids in trn_characterid_to_batch_imdbids.values()])
+        p_one = 100 * n_characterids_one_batch_imdbid/n_characterids
+        n_characterids_two_batch_imdbids = sum([len(batch_imdbids) == 2
+                                                for batch_imdbids in trn_characterid_to_batch_imdbids.values()])
+        p_two = 100 * n_characterids_two_batch_imdbids/n_characterids
+        n_characterids_more_batch_imdbids = sum([len(batch_imdbids) > 2
+                                                 for batch_imdbids in trn_characterid_to_batch_imdbids.values()])
+        p_more = 100 * n_characterids_more_batch_imdbids/n_characterids
+        n_samples = len(trn_characterid_and_trope_to_nbatch_imdbids)
+        n_samples_one_batch_imdbid = sum([nbatch_imdbids == 1
+                                          for nbatch_imdbids in trn_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_one = 100 * n_samples_one_batch_imdbid / n_samples
+        n_samples_two_batch_imdbids = sum([nbatch_imdbids == 2
+                                           for nbatch_imdbids in trn_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_two = 100 * n_samples_two_batch_imdbids / n_samples
+        n_samples_more_batch_imdbids = sum([nbatch_imdbids > 2
+                                            for nbatch_imdbids in trn_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_more = 100 * n_samples_more_batch_imdbids / n_samples
+        logging.info("TRAIN:")
+        logging.info(f"\t{n_batches} batch imdbids, "
+                     f"avg {avg_nsamples_per_batch_imdbid:.1f} samples per batch imdbid")
+        logging.info(f"\t{n_characterids} characters, {n_characterids_one_batch_imdbid} ({p_one:.1f}%), "
+                     f"{n_characterids_two_batch_imdbids} ({p_two:.1f}%) and "
+                     f"{n_characterids_more_batch_imdbids} ({p_more:.1f}%) appear in 1, 2, >2 batch imdbids")
+        logging.info(f"\t{n_samples} samples, {n_samples_one_batch_imdbid} ({q_one:.1f}%), "
+                     f"{n_samples_two_batch_imdbids} ({q_two:.1f}%) and "
+                     f"{n_samples_more_batch_imdbids} ({q_more:.1f}%) appear in 1, 2, >2 batch imdbids")
+
+        n_batches = len(dev_batch_imdbids)
+        avg_nsamples_per_batch_imdbid = np.mean(list(dev_batch_imdbid_to_nsamples.values()))
+        n_characterids = len(dev_characterid_to_batch_imdbids)
+        n_characterids_one_batch_imdbid = sum([len(batch_imdbids) == 1
+                                               for batch_imdbids in dev_characterid_to_batch_imdbids.values()])
+        p_one = 100 * n_characterids_one_batch_imdbid/n_characterids
+        n_characterids_two_batch_imdbids = sum([len(batch_imdbids) == 2
+                                                for batch_imdbids in dev_characterid_to_batch_imdbids.values()])
+        p_two = 100 * n_characterids_two_batch_imdbids/n_characterids
+        n_characterids_more_batch_imdbids = sum([len(batch_imdbids) > 2
+                                                 for batch_imdbids in dev_characterid_to_batch_imdbids.values()])
+        p_more = 100 * n_characterids_more_batch_imdbids/n_characterids
+        n_samples = len(dev_characterid_and_trope_to_nbatch_imdbids)
+        n_samples_one_batch_imdbid = sum([nbatch_imdbids == 1
+                                          for nbatch_imdbids in dev_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_one = 100 * n_samples_one_batch_imdbid / n_samples
+        n_samples_two_batch_imdbids = sum([nbatch_imdbids == 2
+                                           for nbatch_imdbids in dev_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_two = 100 * n_samples_two_batch_imdbids / n_samples
+        n_samples_more_batch_imdbids = sum([nbatch_imdbids > 2
+                                            for nbatch_imdbids in dev_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_more = 100 * n_samples_more_batch_imdbids / n_samples
+        logging.info("DEV:")
+        logging.info(f"\t{n_batches} batch imdbids, "
+                     f"avg {avg_nsamples_per_batch_imdbid:.1f} samples per batch imdbid")
+        logging.info(f"\t{n_characterids} characters, {n_characterids_one_batch_imdbid} ({p_one:.1f}%), "
+                     f"{n_characterids_two_batch_imdbids} ({p_two:.1f}%) and "
+                     f"{n_characterids_more_batch_imdbids} ({p_more:.1f}%) appear in 1, 2, >2 batch imdbids")
+        logging.info(f"\t{n_samples} samples, {n_samples_one_batch_imdbid} ({q_one:.1f}%), "
+                     f"{n_samples_two_batch_imdbids} ({q_two:.1f}%) and "
+                     f"{n_samples_more_batch_imdbids} ({q_more:.1f}%) appear in 1, 2, >2 batch imdbids")
+
+        n_batches = len(tst_batch_imdbids)
+        avg_nsamples_per_batch_imdbid = np.mean(list(tst_batch_imdbid_to_nsamples.values()))
+        n_characterids = len(tst_characterid_to_batch_imdbids)
+        n_characterids_one_batch_imdbid = sum([len(batch_imdbids) == 1
+                                               for batch_imdbids in tst_characterid_to_batch_imdbids.values()])
+        p_one = 100 * n_characterids_one_batch_imdbid/n_characterids
+        n_characterids_two_batch_imdbids = sum([len(batch_imdbids) == 2
+                                                for batch_imdbids in tst_characterid_to_batch_imdbids.values()])
+        p_two = 100 * n_characterids_two_batch_imdbids/n_characterids
+        n_characterids_more_batch_imdbids = sum([len(batch_imdbids) > 2
+                                                 for batch_imdbids in tst_characterid_to_batch_imdbids.values()])
+        p_more = 100 * n_characterids_more_batch_imdbids/n_characterids
+        n_samples = len(tst_characterid_and_trope_to_nbatch_imdbids)
+        n_samples_one_batch_imdbid = sum([nbatch_imdbids == 1
+                                          for nbatch_imdbids in tst_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_one = 100 * n_samples_one_batch_imdbid / n_samples
+        n_samples_two_batch_imdbids = sum([nbatch_imdbids == 2
+                                           for nbatch_imdbids in tst_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_two = 100 * n_samples_two_batch_imdbids / n_samples
+        n_samples_more_batch_imdbids = sum([nbatch_imdbids > 2
+                                            for nbatch_imdbids in tst_characterid_and_trope_to_nbatch_imdbids.values()])
+        q_more = 100 * n_samples_more_batch_imdbids / n_samples
+        logging.info("TEST:")
+        logging.info(f"\t{n_batches} batch imdbids, "
+                     f"avg {avg_nsamples_per_batch_imdbid:.1f} samples per batch imdbid")
+        logging.info(f"\t{n_characterids} characters, {n_characterids_one_batch_imdbid} ({p_one:.1f}%), "
+                     f"{n_characterids_two_batch_imdbids} ({p_two:.1f}%) and "
+                     f"{n_characterids_more_batch_imdbids} ({p_more:.1f}%) appear in 1, 2, >2 batch imdbids")
+        logging.info(f"\t{n_samples} samples, {n_samples_one_batch_imdbid} ({q_one:.1f}%), "
+                     f"{n_samples_two_batch_imdbids} ({q_two:.1f}%) and "
+                     f"{n_samples_more_batch_imdbids} ({q_more:.1f}%) appear in 1, 2, >2 batch imdbids")
 
         return batch_imdbid_to_tensors
