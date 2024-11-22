@@ -38,7 +38,7 @@ def save_story_tensors(_):
     utterances_dfs = []
 
     for imdb_id, imdb_df in tqdm.tqdm(map_df.groupby("imdb-id"), total=map_df["imdb-id"].unique().size,
-                                      desc="reading segments and spans"):
+                                      desc="reading movie segments and spans"):
         imdb_characters = imdb_df["name"].unique()
         segments_file = os.path.join(scriptsdir, imdb_id, "segments.csv")
         mentions_file = os.path.join(scriptsdir, imdb_id, "mentions.csv")

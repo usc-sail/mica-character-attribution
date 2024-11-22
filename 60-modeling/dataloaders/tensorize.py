@@ -4,28 +4,29 @@ import numpy as np
 import pandas as pd
 import torch
 
-def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df,
-                   tensorize_character_segments_only=False):
-    """Tensorize the data for training and testing. The data will be of the form
+def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df):
+    """
+    Tensorize the data for training and testing. The data will be of the form
     [CLS] ch1 ch2 ... chk [SEP] t1 t2 ... tn [SEP]. ch1, ch2, ... chk are k character names. t1, t2, ..., tn are tokens
     of the story segment. The output masks (mentions, utterances, and name masks) will be -inf/0 based.
+
     Input
-    =====
+    -----
         tokenizer = huggingface model tokenizer
         imdb_characters = list[str] of imdb character names
         segments_df = dataframe of segments
         mentions_df = dataframe of character mention spans
         utterances_df = dataframe of character utterance spans
-        tensorize_character_segments_only = (bool) if true, only tensorize segments where the character is mentioned or
-            speaks. Otherwise, tensorize all the segments of the story
+
     Output
-    ======
+    ------
         story_token_ids = long tensor [n_blocks, max_sequence_length]
-        names_mask = float tensor [n_characters, 2]
-        mentions_mask = float tensor [n_mentions, 2]
-        utterances_mask = float tensor [n_utterances, 2]
+        names_idx = float tensor [n_characters, 2]
+        mentions_idx = float tensor [n_mentions, 2]
+        utterances_idx = float tensor [n_utterances, 2]
         mention_character_ids = long tensor [n_mentions]
         utterance_character_ids = long tensor [n_utterances]
+
     Therefore, the total size is O(n_blocks x max_sequence_length + n_characters + n_mentions + n_utterances)
     """
     # create the first sentence of the sequence
@@ -64,7 +65,7 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     # join segments dataframe with the mention and utterance spans dataframes
     segments_df["n-tokens"] = segments_df["segment-text"].apply(
         lambda text: len(tokenizer(text, add_special_tokens=False).input_ids))
-    segments_df["segment-order"] = segments_df["segment-id"].str.split("-").str[-1].astype(int)
+    segments_df["segment-order"] = np.arange(len(segments_df)).tolist()
     mentions_df["span-type"] = "mention"
     utterances_df["span-type"] = "utterance"
     utterances_df["start"] = 0
@@ -73,8 +74,7 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
     spans_df["imdb-character-id"] = spans_df["imdb-character"].apply(lambda ch: imdb_character_to_id[ch])
     n_mentions = (spans_df["span-type"] == "mention").sum()
     n_utterances = (spans_df["span-type"] == "utterance").sum()
-    merge_strategy = "inner" if tensorize_character_segments_only else "left"
-    segments_df = segments_df.merge(spans_df, how=merge_strategy, on="segment-id")
+    segments_df = segments_df.merge(spans_df, how="left", on="segment-id")
     segments_df.loc[segments_df["span-type"] == "utterance", "end"] = (
         segments_df.loc[segments_df["span-type"] == "utterance", "segment-text"].str.len())
 
