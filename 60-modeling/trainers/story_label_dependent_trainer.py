@@ -82,7 +82,9 @@ def train(encoder,
           n_epochs,
           max_tokens_per_batch,
           max_tropes_per_batch,
-          max_grad_norm):
+          max_grad_norm,
+          batches_per_epoch,
+          batches_eval):
     logging.info("initializing CHATTER data")
     chatter = Chatter(data_df, character_movie_map_df)
     trope_to_idx = {trope:i for i, trope in enumerate(tropes)}
@@ -95,6 +97,10 @@ def train(encoder,
     loss_function = BCEWithLogitsLoss()
 
     logging.info("\nstart training\n")
+    tot_batches = batches_per_epoch * n_epochs
+    p, q = tot_batches // len(chatter.trn_batch_imdbids), tot_batches % len(chatter.trn_batch_imdbids)
+    idx = ([i for _ in range(p) for i in np.random.permutation(len(chatter.trn_batch_imdbids))]
+           + np.random.choice(len(chatter.trn_batch_imdbids), q, replace=False).tolist())
     for epoch in range(n_epochs):
         logging.info(f"Epoch {epoch + 1}")
         train_loss_arr = []
@@ -106,29 +112,35 @@ def train(encoder,
         encoder.train()
         model.train()
         classifier.train()
-        idx = np.random.permutation(len(chatter.trn_batch_imdbids))
-        tbar = tqdm.tqdm(idx, unit="batch movie")
+        epoch_idx = idx[epoch * batches_per_epoch: (epoch + 1) * batches_per_epoch]
+        tbar = tqdm.tqdm(epoch_idx, unit="batch movie")
+        nsamples = 0
         for i in tbar:
             optimizer.zero_grad()
             batch_imdbid = chatter.trn_batch_imdbids[i]
-            for loss, _ in run(encoder,
-                            model,
-                            classifier,
-                            "train",
-                            batch_imdbid,
-                            chatter,
-                            batch_imdbid_to_tensors,
-                            trope_embeddings,
-                            trope_to_idx,
-                            loss_function,
-                            max_tropes_per_batch):
+            for loss, logits_dict in run(encoder,
+                                         model,
+                                         classifier,
+                                         "train",
+                                         batch_imdbid,
+                                         chatter,
+                                         batch_imdbid_to_tensors,
+                                         trope_embeddings,
+                                         trope_to_idx,
+                                         loss_function,
+                                         max_tropes_per_batch):
                 loss.backward()
                 optimizer.step()
+                nsamples += len(logits_dict)
                 train_loss_arr.append(loss.item())
-                tbar.set_description(f"train-loss = {loss.item():.4f}")
+                running_avg_train_loss = np.mean(train_loss_arr[-10:])
+                avg_train_loss = np.mean(train_loss_arr)
+                tbar.set_description(f"train-loss: batch={loss.item():.4f} running-avg={running_avg_train_loss:.4f} "
+                                     f"avg={avg_train_loss:.4f}")
                 optimizer.zero_grad()
         avg_train_loss = np.mean(train_loss_arr)
         logging.info(f"avg-train-loss = {avg_train_loss:.4f}")
+        logging.info(f"nsamples trained = {nsamples}")
         # =================================================================
         # end training
 
@@ -137,7 +149,8 @@ def train(encoder,
         encoder.eval()
         model.eval()
         classifier.eval()
-        tbar = tqdm.tqdm(chatter.dev_batch_imdbids, unit="batch movie")
+        eval_batch_imdbids = random.sample(chatter.dev_batch_imdbids, min(batches_eval, len(chatter.dev_batch_imdbids)))
+        tbar = tqdm.tqdm(eval_batch_imdbids, unit="batch movie")
         with torch.no_grad():
             for batch_imdbid in tbar:
                 for loss, logits_dict in run(encoder,
@@ -153,9 +166,10 @@ def train(encoder,
                                              max_tropes_per_batch):
                     # save loss to loss array
                     valid_loss_arr.append(loss.item())
+                    avg_valid_loss = np.mean(valid_loss_arr)
                     for key, vals in logits_dict.items():
                         valid_logits_dict[key].update(vals)
-                    tbar.set_description(f"valid-loss = {loss.item():.4f}")
+                    tbar.set_description(f"valid-loss: batch={loss.item():.4f} avg={avg_valid_loss:.4f}")
         valid_labels = []
         valid_logits = []
         for key, vals in valid_logits_dict.items():
@@ -165,7 +179,7 @@ def train(encoder,
         valid_labels = np.array(valid_labels)
         accuracy, precision, recall, f1 = evaluate(valid_logits, valid_labels)
         avg_valid_loss = np.mean(valid_loss_arr)
-        logging.info(f"avg-valid-loss = {avg_valid_loss:.4f} acc = {accuracy:.1f}, "
+        logging.info(f"avg-valid-loss = {avg_valid_loss:.4f} accuracy = {accuracy:.1f}, "
                      f"precision = {precision:.1f}, recall = {recall:.1f}, f1 = {f1:.1f}")
         # =================================================================
         # end evaluation

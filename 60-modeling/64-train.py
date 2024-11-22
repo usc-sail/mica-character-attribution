@@ -38,6 +38,8 @@ flags.DEFINE_float("decay", default=1e-2, help="weight decay")
 flags.DEFINE_integer("chrbatch", default=5, help="characters per batch when training with input = 'character'")
 flags.DEFINE_integer("trpbatch", default=50, help="tropes per batch when training with input = 'story'")
 flags.DEFINE_integer("tokbatch", default=40, help="tokens in '000s per batch")
+flags.DEFINE_integer("batchepoch", default=100, help="number of batches per epoch")
+flags.DEFINE_integer("batcheval", default=25, help="number of dev batches to evaluate per epoch")
 
 def start_training(_):
     now = datetime.datetime.now()

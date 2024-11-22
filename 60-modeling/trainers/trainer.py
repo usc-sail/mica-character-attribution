@@ -100,4 +100,6 @@ class Trainer:
                                                     self.args.ep,
                                                     1000 * self.args.tokbatch,
                                                     self.args.trpbatch,
-                                                    self.args.gradnorm)
+                                                    self.args.gradnorm,
+                                                    self.args.batchepoch,
+                                                    self.args.batcheval)
