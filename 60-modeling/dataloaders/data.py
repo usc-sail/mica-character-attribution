@@ -71,6 +71,24 @@ class Chatter:
                                          "utterances-character-ids": utterance_character_ids,
                                          }
         return imdbid_to_tensors
+    
+    def read_character_data(self, tensors_dir):
+        characterid_to_tensors = {}
+        for characterid in os.listdir(tensors_dir):
+            token_ids_file = os.path.join(tensors_dir, characterid, "token-ids.pt")
+            if os.path.exists(token_ids_file):
+                names_idx_file = os.path.join(tensors_dir, characterid, "names-idx.pt")
+                mentions_idx_file = os.path.join(tensors_dir, characterid, "mentions-idx.pt")
+                utterances_idx_file = os.path.join(tensors_dir, characterid, "utterances-idx.pt")
+                token_ids = torch.load(token_ids_file, weights_only=True).cuda()
+                names_idx = torch.load(names_idx_file, weights_only=True).cuda()
+                mentions_idx = torch.load(mentions_idx_file, weights_only=True).cuda()
+                utterances_idx = torch.load(utterances_idx_file, weights_only=True).cuda()
+                characterid_to_tensors[characterid] = {"token-ids": token_ids,
+                                                       "names-idx": names_idx,
+                                                       "mentions-idx": mentions_idx,
+                                                       "utterances-idx": utterances_idx}
+        return characterid_to_tensors
 
     def tensorshape(self, tensor):
         return "[" + ",".join(f"{d:5d}" for d in tensor.shape) + "]"
@@ -296,3 +314,175 @@ class Chatter:
                      f"{n_samples_more_batch_imdbids} ({q_more:.1f}%) appear in 1, 2, >2 batch imdbids")
 
         return batch_imdbid_to_tensors
+
+    def batch_characters(self, characterid_to_tensors, max_n_tokens):
+        # find the sequence length of the token-ids tensors, data type of the token-ids and the data type of the 
+        # mentions/utterances-idx tensors, and the device which holds the tensors
+        for tensors_dict in characterid_to_tensors.values():
+            token_ids = tensors_dict["token-ids"]
+            mentions_idx = tensors_dict["mentions-idx"]
+            seqlen = token_ids.shape[1]
+            dtype_ids = token_ids.dtype
+            dtype_idx = mentions_idx.dtype
+            device = token_ids.device
+            break
+
+        # calculate the maximum number of sequences (1 sequence = 1 block) allowed in a batch based on the maximum 
+        # number of tokens allowed in a batch
+        max_n_blocks_batch = math.ceil(max_n_tokens / seqlen)
+
+        # find the set of tropes portrayed or not portrayed by each character for each partition
+        # train characterids are mutually exclusive from dev and test characterids
+        # test characterids is a subset of dev characterids 
+        # but the test characterids are tested on a different set of tropes
+        trn_characterid_to_tropes = collections.defaultdict(set)
+        dev_characterid_to_tropes = collections.defaultdict(set)
+        tst_characterid_to_tropes = collections.defaultdict(set)
+        for characterid, trope, partition in (self.data_df[["character", "trope", "partition"]]
+                                              .itertuples(index=False, name=None)):
+            if characterid in characterid_to_tensors:
+                if partition == "train":
+                    trn_characterid_to_tropes[characterid].add(trope)
+                elif partition == "dev":
+                    dev_characterid_to_tropes[characterid].add(trope)
+                elif partition == "test":
+                    tst_characterid_to_tropes[characterid].add(trope)
+
+        character_batches_arr = []
+        characterid_to_tropes_arr = [trn_characterid_to_tropes, dev_characterid_to_tropes, tst_characterid_to_tropes]
+        partitions = ["TRAIN", "DEV", "TEST"]
+        for characterid_to_tropes, partition in zip(characterid_to_tropes_arr, partitions):
+            characterids = sorted(characterid_to_tropes.keys())
+            random.seed(0)
+            random.shuffle(characterids)
+
+            # calculate the number of sequences in every character segment
+            n_blocks = []
+            for characterid in characterids:
+                n_blocks.append(characterid_to_tensors[characterid]["token-ids"].shape[0])
+            sort_index = np.argsort(n_blocks, stable=True)
+
+            i = 0
+            character_batches = []
+            n_samples = 0
+            n_characters_with_n_blocks_grt_max_n_blocks = 0
+            n_tropes_batch_arr = []
+            frac_pos_tropes_batch_arr = []
+
+            while i < len(characterids):
+                max_n_blocks_character = n_blocks[sort_index[i]]
+
+                # if the character's segments contain more than the allowed number of sequences of a batch, then 
+                # truncate the character's segments to the allowed number of sequences
+                # the batch will contain exactly one character
+                if max_n_blocks_character > max_n_blocks_batch:
+                    n_characters_with_n_blocks_grt_max_n_blocks += 1
+                    characterid = characterids[sort_index[i]]
+                    tensors_dict = characterid_to_tensors[characterid]
+
+                    # token_ids = [1, b, l]
+                    # names_idx = [1, 2]
+                    # mentions_idx = [1, m, 2]
+                    # utterances_idx = [1, u, 2]
+                    token_ids = tensors_dict["token-ids"][:max_n_blocks_batch].unsqueeze(1)
+                    names_idx = tensors_dict["names-idx"]
+                    mentions_idx = tensors_dict["mentions-idx"]
+                    utterances_idx = tensors_dict["utterances-idx"]
+                    mentions_idx = mentions_idx[mentions_idx[:, 1] <= max_n_blocks_batch * seqlen].unsqueeze(1)
+                    utterances_idx = utterances_idx[utterances_idx[:, 1] <= max_n_blocks_batch * seqlen].unsqueeze(1)
+                    tropes = sorted(characterid_to_tropes[characterid])
+                    n_tropes_batch_arr.append(len(tropes))
+                    n_pos_tropes_batch = sum([self.characterid_and_trope_to_label[(characterid, trope)] == 1
+                                              for trope in tropes])
+                    frac_pos_tropes_batch_arr.append(n_pos_tropes_batch/len(tropes))
+                    n_samples += len(tropes)
+                    character_batches.append({"character-ids": [characterid],
+                                              "batch-token-ids": token_ids,
+                                              "batch-names-idx": names_idx,
+                                              "batch-mentions-idx": mentions_idx,
+                                              "batch-utterances-idx": utterances_idx,
+                                              "tropes": tropes})
+                    i += 1
+
+                else:
+                    # calculate the maximum number of blocks allowed per character in a batch
+                    j = i + 1
+                    while j < len(characterids) and max_n_blocks_character * (j - i) <= max_n_blocks_batch:
+                        max_n_blocks_character = max(n_blocks[sort_index[j]], max_n_blocks_character)
+                        j += 1
+                    batch_characterids = [characterids[sort_index[k]] for k in range(i, j)]
+                    max_n_blocks_character = -1
+                    max_n_mentions_character = -1
+                    max_n_utterances_character = -1
+                    token_ids_arr = []
+                    names_idx_arr = []
+                    mentions_idx_arr = []
+                    utterances_idx_arr = []
+
+                    for characterid in batch_characterids:
+                        tensors_dict = characterid_to_tensors[characterid]
+                        token_ids = tensors_dict["token-ids"]
+                        names_idx = tensors_dict["names-idx"]
+                        mentions_idx = tensors_dict["mentions-idx"]
+                        utterances_idx = tensors_dict["utterances-idx"]
+                        max_n_blocks_character = max(token_ids.shape[0], max_n_blocks_character)
+                        max_n_mentions_character = max(mentions_idx.shape[0], max_n_mentions_character)
+                        max_n_utterances_character = max(utterances_idx.shape[0], max_n_utterances_character)
+                        token_ids_arr.append(token_ids)
+                        names_idx_arr.append(names_idx)
+                        mentions_idx_arr.append(mentions_idx)
+                        utterances_idx_arr.append(utterances_idx)
+
+                    # pad the token-ids, mentions-idx and utterances-idx to get [n_characters, n_blocks, ...] shape
+                    n = j - i
+                    for k in range(n):
+                        n_padding_blocks = max_n_blocks_character - token_ids_arr[k].shape[0]
+                        n_padding_mentions_idx = max_n_mentions_character - mentions_idx_arr[k].shape[0]
+                        n_padding_utterances_idx = max_n_utterances_character - utterances_idx_arr[k].shape[0]
+                        if n_padding_blocks > 0:
+                            padding_blocks = torch.zeros((n_padding_blocks, seqlen), dtype=dtype_ids, device=device)
+                            token_ids_arr[k] = torch.cat([token_ids_arr[k], padding_blocks], dim=0)
+                        if n_padding_mentions_idx > 0:
+                            padding_mentions_idx = torch.zeros((n_padding_mentions_idx, 2), dtype=dtype_idx,
+                                                               device=device)
+                            mentions_idx_arr[k] = torch.cat([mentions_idx_arr[k], padding_mentions_idx], dim=0)
+                        if n_padding_utterances_idx > 0:
+                            padding_utterances_idx = torch.zeros((n_padding_utterances_idx, 2), dtype=dtype_idx,
+                                                                 device=device)
+                            utterances_idx_arr[k] = torch.cat([utterances_idx_arr[k], padding_utterances_idx], dim=0)
+                    batch_token_ids = torch.cat(token_ids_arr, dim=0).reshape(n, max_n_blocks_character, seqlen)
+                    batch_names_idx = torch.cat(names_idx_arr, dim=0).reshape(n, 2)
+                    batch_mentions_idx = torch.cat(mentions_idx_arr, dim=0).reshape(n, max_n_mentions_character, 2)
+                    batch_utterances_idx = torch.cat(utterances_idx_arr, dim=0).reshape(
+                        n, max_n_utterances_character, 2)
+                    tropes = sorted(set([trope for characterid in batch_characterids
+                                               for trope in characterid_to_tropes[characterid]]))
+                    n_tropes_batch_arr.append(len(tropes))
+                    n_pos_tropes_batch = 0
+                    for characterid in batch_characterids:
+                        for trope in tropes:
+                            if trope in characterid_to_tropes[characterid]:
+                                label = self.characterid_and_trope_to_label[(characterid, trope)]
+                                n_pos_tropes_batch += label == 1
+                                n_samples += 1
+                    frac_pos_tropes_batch_arr.append(n_pos_tropes_batch/len(tropes))
+                    character_batches.append({"character-ids": batch_characterids,
+                                              "batch-token-ids": batch_token_ids,
+                                              "batch-names-idx": batch_names_idx,
+                                              "batch-mentions-idx": batch_mentions_idx,
+                                              "batch-utterances-idx": batch_utterances_idx,
+                                              "tropes": tropes})
+                    i = j
+            n_labeled_samples = (self.data_df["partition"] == partition.lower()).sum()
+            n_missed_samples = n_labeled_samples - n_samples
+            print(f"{partition}")
+            print(f"{n_characters_with_n_blocks_grt_max_n_blocks} characters had their segments truncated")
+            print(f"{n_labeled_samples} labeled samples, {n_missed_samples} samples removed because character did "
+                  "not have any mentions or utterances")
+            print(f"{n_samples} samples, {len(character_batches)} batches")
+            print(f"tropes per batch: avg = {np.mean(n_tropes_batch_arr):.1f} "
+                  f"[{min(n_tropes_batch_arr)}, {max(n_tropes_batch_arr)}]")
+            print(f"fraction positive samples per batch = {np.mean(frac_pos_tropes_batch_arr):.1f} "
+                  f"[{min(frac_pos_tropes_batch_arr):.1f}, {max(frac_pos_tropes_batch_arr):.1f}]")
+            character_batches_arr.append(character_batches)
+        return character_batches_arr
