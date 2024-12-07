@@ -8,7 +8,6 @@ import os
 import pandas as pd
 import torch
 import tqdm
-from transformers import AutoTokenizer
 
 from absl import app
 from absl import flags
@@ -25,7 +24,7 @@ def save_character_tensors(_):
     mapfile = os.path.join(datadir, "CHATTER/character-movie-map.csv")
     metadatafile = os.path.join(datadir, "CHATTER/movie-metadata.csv")
     scriptsdir = os.path.join(datadir, "movie-scripts")
-    tensorsdir = os.path.join(datadir, "60-modeling/tensors/character", model)
+    tensorsdir = os.path.join(datadir, "60-modeling/tensors/character", model, f"context-{context}")
     map_df = pd.read_csv(mapfile, index_col=None, dtype=str)
     metadata_df = pd.read_csv(metadatafile, index_col=None, dtype={"imdb-id": str})
     map_df = map_df.merge(metadata_df, how="left", on="imdb-id")
