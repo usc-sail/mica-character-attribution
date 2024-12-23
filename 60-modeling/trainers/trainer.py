@@ -1,10 +1,13 @@
 """Train the label-dependent or label-independent character representation models"""
 
-from models.label_dependent import LabelDependent
-from models.label_independent import LabelIndependent
+from models.labeldep.character import CharacterLabelDependent
+from models.labeldep.story import StoryLabelDependent
+from models.labelind.character import CharacterLabelIndependent
+from models.labelind.story import StoryLabelIndependent
 from models.classifier import PortayClassifier
 from models.pretrained import Model
-from trainers import story_label_dependent_trainer
+from trainers import character_trainer
+from trainers import story_trainer
 import datadirs
 
 import os
@@ -31,8 +34,11 @@ class Trainer:
         dataset_df = pd.read_csv(dataset_file, index_col=None, dtype={"content-text": str})
         tropes_df = pd.read_csv(tropes_file, index_col=None)
         character_movie_map_df = pd.read_csv(character_movie_map_file, index_col=None, dtype=str)
-        tensors_dir = os.path.join(datadir, "60-modeling/tensors", self.args.input, self.args.model)
-        tropes_dir = os.path.join(datadir, "60-modeling/trope-embeddings")
+        inputtype = "character" if self.args.segment else "story"
+        tensors_dir = os.path.join(datadir, "60-modeling/tensors", inputtype, self.args.model)
+        if self.args.segment:
+            tensors_dir = os.path.join(tensors_dir, f"context-{self.args.context}")
+        tropes_dir = os.path.join(datadir, "60-modeling/tensors/tropes", self.args.model)
 
         # load trope embeddings
         tropes = tropes_df["trope"].tolist()
@@ -53,10 +59,16 @@ class Trainer:
             target_modules = ["query", "key", "value", "global_query", "global_key", "global_value"]
         hidden_size = encoder.config.hidden_size
         if self.args.lbl:
-            model = LabelDependent(hidden_size)
+            if self.args.segment:
+                model = CharacterLabelDependent(hidden_size, self.args.mention, self.args.utter)
+            else:
+                model = StoryLabelDependent(hidden_size, self.args.mention, self.args.utter)
             classifier = PortayClassifier(hidden_size)
         else:
-            model = LabelIndependent(hidden_size)
+            if self.args.segment:
+                model = CharacterLabelIndependent(hidden_size, self.args.mention, self.args.utter)
+            else:
+                model = StoryLabelIndependent(hidden_size, self.args.mention, self.args.utter)
             classifier = PortayClassifier(2 * hidden_size)
 
         # lora
@@ -84,22 +96,37 @@ class Trainer:
         optimizer = AdamW(parameters, weight_decay=self.args.decay)
 
         # train model
-        if self.args.input == "story":
-            logging.info("input = story")
-            if self.args.lbl:
-                logging.info("model = label-dependent\n")
-                story_label_dependent_trainer.train(encoder,
-                                                    model,
-                                                    classifier,
-                                                    optimizer,
-                                                    dataset_df,
-                                                    character_movie_map_df,
-                                                    tropes,
-                                                    trope_embeddings,
-                                                    tensors_dir,
-                                                    self.args.ep,
-                                                    1000 * self.args.tokbatch,
-                                                    self.args.trpbatch,
-                                                    self.args.gradnorm,
-                                                    self.args.batchepoch,
-                                                    self.args.batcheval)
+        if self.args.segment:
+            character_trainer.train(self.args.lbl,
+                                    encoder,
+                                    model,
+                                    classifier,
+                                    optimizer,
+                                    dataset_df,
+                                    character_movie_map_df,
+                                    tropes,
+                                    trope_embeddings,
+                                    tensors_dir,
+                                    self.args.ep,
+                                    1000 * self.args.tokbatch,
+                                    self.args.trpbatch,
+                                    self.args.gradnorm,
+                                    self.args.batchepoch,
+                                    self.args.batcheval)
+        else:
+            story_trainer.train(self.args.lbl,
+                                encoder,
+                                model,
+                                classifier,
+                                optimizer,
+                                dataset_df,
+                                character_movie_map_df,
+                                tropes,
+                                trope_embeddings,
+                                tensors_dir,
+                                self.args.ep,
+                                1000 * self.args.tokbatch,
+                                self.args.trpbatch,
+                                self.args.gradnorm,
+                                self.args.batchepoch,
+                                self.args.batcheval)

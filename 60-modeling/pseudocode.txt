@@ -91,3 +91,35 @@ for movie m in movies M:
         run classifier to get C x t logits
         create labels L of shape C x t
         assumption: 1) if C portrays trope, label is 1, 2) 
+
+[b1, l] [b1, l]
+[b2, l]
+...
+[bn, l]
+
+b = max(b1, b2, ..., bn)
+[n, b, l] [n, b, l]
+
+character + label-dependent
+name_representation:
+    input:
+        segment-embeddings = [k, b, l, d]
+        names-idx = [k, 2]
+        label-embeddings = [t, d]
+    output:
+        name-representation = [k, t, d]
+    algorithm:
+        Step 1.
+            extended-names-idx = create tensor [b, 2]
+            for i, j in enumerate(segment-character-ids):
+                extended-names-idx[i] = names-idx[j]
+            sequence = [0, 1, 2, ... , l - 1] (1, l)
+            names-mask = (extended-names-idx[:, 0] <= sequence) & (extended-names-idx[:, 1] > sequence) (b, l)
+            names-mask = torch.log(names-mask) (b, l)
+        Step 2.
+            names-score = (names-weights x segment-embedding).squeeze() [b, l]
+            names-attn = torch.softmax(names-score + names-mask, dim=1) [b, l]
+            segment-names-embeddings = torch.matmul(names-attn.unsqueeze(dim = 1) [b, 1, l],
+                segment-embeddings [b, l, d]).squeeze() [b, d]
+        Step 3.
+            segment-label-score = segment-names-embeddings [b, d] x label-embeddings.transpose [d, t] = [b, t]

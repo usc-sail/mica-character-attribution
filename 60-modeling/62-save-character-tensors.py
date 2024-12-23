@@ -107,18 +107,20 @@ def save_character_tensors(_):
                           characters_utterances_dfs))):
         logging.info(f"{i + 1:4d}/{len(characterids)} character-id = {characterid}")
         try:
-            token_ids, mentions_idx, utterances_idx, names_idx, _, _ = tensorize.create_tensors(
+            token_ids, attention_mask, mentions_idx, utterances_idx, names_idx = tensorize.create_tensors(
                 tokenizer, [character_name], character_segments_df, character_mentions_df, character_utterances_df)
             character_tensors_dir = os.path.join(tensorsdir, characterid)
             os.makedirs(character_tensors_dir, exist_ok=True)
             torch.save(token_ids, os.path.join(character_tensors_dir, "token-ids.pt"))
+            torch.save(attention_mask, os.path.join(character_tensors_dir, "mask.pt"))
             torch.save(mentions_idx, os.path.join(character_tensors_dir, "mentions-idx.pt"))
             torch.save(utterances_idx, os.path.join(character_tensors_dir, "utterances-idx.pt"))
             torch.save(names_idx, os.path.join(character_tensors_dir, "names-idx.pt"))
-            logging.info(f"token-ids = {tuple(token_ids.shape)}")
-            logging.info(f"names-idx = {tuple(names_idx.shape)}")
-            logging.info(f"mentions-idx = {tuple(mentions_idx.shape)}")
-            logging.info(f"utterances-idx = {tuple(utterances_idx.shape)}")
+            logging.info(f"\ttoken-ids      = {tuple(token_ids.shape)}")
+            logging.info(f"\tattention-mask = {tuple(attention_mask.shape)}")
+            logging.info(f"\tnames-idx      = {tuple(names_idx.shape)}")
+            logging.info(f"\tmentions-idx   = {tuple(mentions_idx.shape)}")
+            logging.info(f"\tutterances-idx = {tuple(utterances_idx.shape)}")
         except Exception as e:
             logging.warning(str(e))
         logging.info("")

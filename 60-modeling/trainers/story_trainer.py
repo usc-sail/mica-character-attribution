@@ -1,19 +1,19 @@
 """Train and evaluate the label dependent model on full story"""
-from eval.evaluation import evaluate
+import evaluation
+import utils
 from dataloaders.data import Chatter
 from absl import logging
 
 import collections
 import math
-import time
 import tqdm
 import torch
 import random
-from torch import autograd
 import numpy as np
 from torch.nn import BCEWithLogitsLoss
 
-def run(encoder,
+def run(lbl,
+        encoder,
         model,
         classifier,
         partition,
@@ -42,16 +42,20 @@ def run(encoder,
         characterids = tensors["character-ids"]
 
         # embeddings = characters x tropes x hidden-size
-        story_embeddings = encoder(tensors["token-ids"]).last_hidden_state
-        embeddings = model(story_embeddings,
-                           tensors["names-idx"],
-                           tensors["mentions-idx"],
-                           tensors["utterances-idx"],
-                           tensors["mentions-character-ids"],
-                           tensors["utterances-character-ids"],
-                           subbatch_trope_embeddings)
-
-        # logits = characters x tropes
+        story_embeddings = encoder(tensors["batch-token-ids"],
+                                   attention_mask=tensors["batch-mask"]).last_hidden_state # [b, l, d]
+        if lbl:
+            embeddings = model(story_embeddings,
+                               tensors["batch-names-idx"],
+                               tensors["batch-mentions-idx"],
+                               tensors["batch-utterances-idx"],
+                               subbatch_trope_embeddings) # [k, t, d]
+        else:
+            character_embeddings = model(story_embeddings,
+                                         tensors["batch-names-idx"],
+                                         tensors["batch-mentions-idx"],
+                                         tensors["batch-utterances-idx"]) # [k, d]
+            embeddings = utils.cartesian_concatenate(character_embeddings, subbatch_trope_embeddings) # [k, t, 2d]
         logits = classifier(embeddings)
 
         # create labels = characters x tropes
@@ -70,7 +74,8 @@ def run(encoder,
         loss = loss_function(logits, labels)
         yield loss, logits_dict
 
-def train(encoder,
+def train(lbl,
+          encoder,
           model,
           classifier,
           optimizer,
@@ -118,7 +123,8 @@ def train(encoder,
         for i in tbar:
             optimizer.zero_grad()
             batch_imdbid = chatter.trn_batch_imdbids[i]
-            for loss, logits_dict in run(encoder,
+            for loss, logits_dict in run(lbl,
+                                         encoder,
                                          model,
                                          classifier,
                                          "train",
@@ -177,7 +183,7 @@ def train(encoder,
             valid_logits.append(max(vals))
         valid_logits = np.array(valid_logits)
         valid_labels = np.array(valid_labels)
-        accuracy, precision, recall, f1 = evaluate(valid_logits, valid_labels)
+        accuracy, precision, recall, f1 = evaluation.evaluate(valid_logits, valid_labels)
         avg_valid_loss = np.mean(valid_loss_arr)
         logging.info(f"avg-valid-loss = {avg_valid_loss:.4f} accuracy = {accuracy:.1f}, "
                      f"precision = {precision:.1f}, recall = {recall:.1f}, f1 = {f1:.1f}")

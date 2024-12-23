@@ -9,3 +9,4 @@ conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvi
 conda install conda-forge::transformers
 pip install accelerate
 pip install bitsandbytes
+pip install sentencepiece
