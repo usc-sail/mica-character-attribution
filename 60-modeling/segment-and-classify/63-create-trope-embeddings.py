@@ -1,18 +1,17 @@
 import datadirs
 from models import pretrained
 
-import os
-import math
-import tqdm
-import torch
-import pandas as pd
-from transformers import RobertaModel, RobertaTokenizer
-
 from absl import app
 from absl import flags
+import math
+import os
+import pandas as pd
+import shutil
+import torch
+import tqdm
 
 FLAGS = flags.FLAGS
-flags.DEFINE_enum("model", default="roberta", enum_values=["roberta", "longformer"], help="model")
+flags.DEFINE_enum("model", default="roberta", enum_values=["roberta", "longformer", "llama"], help="model")
 flags.DEFINE_integer("batch", default=192, help="number of tropes per batch")
 # 192 works good for longformer, 300 for roberta in a 48 GB GPU
 
@@ -27,7 +26,10 @@ def create_trope_embeddings(_):
         encoder = pretrained.Model.roberta()
     elif model == "longformer":
         tokenizer = pretrained.Tokenizer.longformer()
-        encoder = pretrained.Model.longformer(128)
+        encoder = pretrained.Model.longformer(512)
+    elif model == "llama":
+        tokenizer = pretrained.Tokenizer.llama()
+        encoder = pretrained.Model.llama()
     encoder.cuda()
     definitions = tropes_df["summary"].tolist()
     tokenizer_output = tokenizer(definitions, padding="max_length", truncation=True, max_length=128,
@@ -48,6 +50,16 @@ def create_trope_embeddings(_):
         strfileid = f"{i + 1}".zfill(3)
         batch_trope_embeddings_file = os.path.join(tensorsdir, f"trope-embeddings-{strfileid}.pt")
         torch.save(batch_trope_embeddings, batch_trope_embeddings_file)
+    trope_embeddings_arr = []
+    trope_embeddings_file = os.path.join(datadir, f"60-modeling/tensors/tropes/{model}.pt")
+    for i in tqdm.trange(nbatches, unit="file", desc="concatenation"):
+        strfileid = f"{i + 1}".zfill(3)
+        batch_trope_embeddings_file = os.path.join(tensorsdir, f"trope-embeddings-{strfileid}.pt")
+        trope_embeddings_arr.append(torch.load(batch_trope_embeddings_file, weights_only=True))
+    trope_embeddings = torch.cat(trope_embeddings_arr, dim=0)
+    print(f"embeddings shape = {tuple(trope_embeddings.shape)} dtype = {trope_embeddings.dtype}")
+    torch.save(trope_embeddings, trope_embeddings_file)
+    shutil.rmtree(tensorsdir)
 
 if __name__ == '__main__':
     app.run(create_trope_embeddings)

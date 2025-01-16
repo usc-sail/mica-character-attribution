@@ -38,16 +38,12 @@ class Trainer:
         tensors_dir = os.path.join(datadir, "60-modeling/tensors", inputtype, self.args.model)
         if self.args.segment:
             tensors_dir = os.path.join(tensors_dir, f"context-{self.args.context}")
-        tropes_dir = os.path.join(datadir, "60-modeling/tensors/tropes", self.args.model)
+        trope_embeddings_file = os.path.join(datadir, f"60-modeling/tensors/tropes/{self.args.model}.pt")
 
         # load trope embeddings
         tropes = tropes_df["trope"].tolist()
-        trope_embeddings_files = sorted(os.listdir(tropes_dir))
-        trope_embeddings_arr = []
-        for file in tqdm.tqdm(trope_embeddings_files, desc="load trope embeddings", unit="file"):
-            trope_embeddings_arr.append(torch.load(os.path.join(tropes_dir, file), weights_only=True))
-        trope_embeddings = torch.cat(trope_embeddings_arr, dim=0).cuda()
-        logging.info(f"trope-embeddings = {tuple(trope_embeddings.shape)}")
+        trope_embeddings = torch.load(trope_embeddings_file, weights_only=True).cuda()
+        logging.info(f"trope-embeddings = {tuple(trope_embeddings.shape)}\n")
 
         # initialize model
         logging.info("initializing model")
@@ -57,6 +53,9 @@ class Trainer:
         elif self.args.model == "longformer":
             encoder = Model.longformer(self.args.longformerattn)
             target_modules = ["query", "key", "value", "global_query", "global_key", "global_value"]
+        elif self.args.model == "llama":
+            encoder = Model.llama()
+            target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
         hidden_size = encoder.config.hidden_size
         if self.args.lbl:
             if self.args.segment:
@@ -72,25 +71,26 @@ class Trainer:
             classifier = PortayClassifier(2 * hidden_size)
 
         # lora
-        logging.info("initializing lora adapters")
-        loraconfig = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION,
-                                inference_mode=False,
-                                r=self.args.rank,
-                                lora_alpha=self.args.alpha,
-                                target_modules=target_modules,
-                                use_rslora=True,
-                                lora_dropout=self.args.dropout,
-                                bias="none")
-        encoder = get_peft_model(encoder, loraconfig)
+        if self.args.lora:
+            logging.info("initializing lora adapters")
+            loraconfig = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION,
+                                    inference_mode=False,
+                                    r=self.args.rank,
+                                    lora_alpha=self.args.alpha,
+                                    target_modules=target_modules,
+                                    use_rslora=True,
+                                    lora_dropout=self.args.dropout,
+                                    bias="none")
+            encoder = get_peft_model(encoder, loraconfig)
 
         # move model to gpu
-        logging.info("moving model to gpu")
+        logging.info("moving model to gpu\n")
         encoder.cuda()
         model.cuda()
         classifier.cuda()
 
         # initialize optimizer
-        logging.info("initializing optimizer")
+        logging.info("initializing optimizer\n")
         parameters = [{"params": itertools.chain(model.parameters(), classifier.parameters()), "lr": self.args.lr},
                       {"params": encoder.parameters(), "lr": self.args.elr}]
         optimizer = AdamW(parameters, weight_decay=self.args.decay)

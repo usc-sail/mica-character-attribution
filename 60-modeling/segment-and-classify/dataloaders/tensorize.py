@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df):
+def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utterances_df, add_prefix_space=False):
     """
     Tensorize the data for training and testing. The data will be of the form
     [CLS] ch1 ch2 ... chk [SEP] t1 t2 ... tn [SEP]. ch1, ch2, ... chk are k character names. t1, t2, ..., tn are tokens
@@ -65,7 +65,7 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
 
     # join segments dataframe with the mention and utterance spans dataframes
     segments_df["n-tokens"] = segments_df["segment-text"].apply(
-        lambda text: len(tokenizer(text, add_special_tokens=False).input_ids))
+        lambda text: len(tokenizer((" " if add_prefix_space else "") + text, add_special_tokens=False).input_ids))
     segments_df["segment-order"] = np.arange(len(segments_df)).tolist()
     mentions_df["span-type"] = "mention"
     utterances_df["span-type"] = "utterance"
@@ -103,12 +103,16 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
 
         # add segment to sequence if it fits
         if current_block_n_tokens + n_segment_tokens < max_n_tokens_sentence_pair:
-            if current_block_n_segments:
+            if add_prefix_space:
                 prefix = " "
                 prefix_size = 1
             else:
-                prefix = ""
-                prefix_size = 0
+                if current_block_n_segments:
+                    prefix = " "
+                    prefix_size = 1
+                else:
+                    prefix = ""
+                    prefix_size = 0
             segment_text = segment_df["segment-text"].values[0]
             segment_spans_df = segment_df[["span-type", "imdb-character-id", "start", "end"]].dropna(axis=0)
             segment_spans_df[["imdb-character-id", "start", "end"]] = (
@@ -124,6 +128,8 @@ def create_tensors(tokenizer, imdb_characters, segments_df, mentions_df, utteran
                                                                ["imdb-character-id", "start", "end"]].to_numpy()
             current_block_mention_spans_arrs.append(segment_mention_spans_arr)
             current_block_utterance_spans_arrs.append(segment_utterance_spans_arr)
+            # actual = len(tokenizer(current_block_text, add_special_tokens=False).input_ids)
+            # logging.info(f"calc = {current_block_n_tokens - n_tokens_imdb_characters_sentence}, actual = {actual}")
             i += 1
         else:
             if current_block_n_segments:

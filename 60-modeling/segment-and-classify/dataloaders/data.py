@@ -345,7 +345,7 @@ class Chatter:
         # calculate the maximum number of sequences (1 sequence = 1 block) allowed in a batch based on the maximum 
         # number of tokens allowed in a batch
         max_n_blocks_batch = math.ceil(max_n_tokens / seqlen)
-        print(f"maximum number of sequences per batch = {max_n_blocks_batch}")
+        logging.info(f"maximum number of sequences per batch = {max_n_blocks_batch}\n")
 
         # find the set of tropes portrayed or not portrayed by each character for each partition
         # train characterids are mutually exclusive from dev and test characterids
@@ -406,8 +406,9 @@ class Chatter:
                     names_idx = tensors_dict["names-idx"]
                     mentions_idx = tensors_dict["mentions-idx"]
                     utterances_idx = tensors_dict["utterances-idx"]
-                    mentions_idx = mentions_idx[mentions_idx[:,:,1] <= max_n_blocks_batch * seqlen]
-                    utterances_idx = utterances_idx[utterances_idx[:,:,1] <= max_n_blocks_batch * seqlen]
+                    mentions_idx = mentions_idx[mentions_idx[:,:,1] <= max_n_blocks_batch * seqlen].reshape(1, -1, 2)
+                    utterances_idx = (utterances_idx[utterances_idx[:,:,1] <= max_n_blocks_batch * seqlen]
+                                      .reshape(1, -1, 2))
                     tropes = sorted(characterid_to_tropes[characterid])
                     n_tropes_batch_arr.append(len(tropes))
                     n_pos_tropes_batch = sum([self.characterid_and_trope_to_label[(characterid, trope)] == 1
@@ -503,14 +504,14 @@ class Chatter:
                     i = j
             n_labeled_samples = (self.data_df["partition"] == partition.lower()).sum()
             n_missed_samples = n_labeled_samples - n_samples
-            print(f"{partition}")
-            print(f"{n_characters_with_n_blocks_grt_max_n_blocks} characters had their segments truncated")
-            print(f"{n_labeled_samples} labeled samples, {n_missed_samples} samples removed because character did "
-                  "not have any mentions or utterances")
-            print(f"{n_samples} samples, {len(character_batches)} batches")
-            print(f"tropes per batch: avg = {np.mean(n_tropes_batch_arr):.1f} "
-                  f"[{min(n_tropes_batch_arr)}, {max(n_tropes_batch_arr)}]")
-            print(f"fraction positive samples per batch = {np.mean(frac_pos_tropes_batch_arr):.1f} "
-                  f"[{min(frac_pos_tropes_batch_arr):.1f}, {max(frac_pos_tropes_batch_arr):.1f}]")
+            logging.info(f"{partition}")
+            logging.info(f"{n_characters_with_n_blocks_grt_max_n_blocks} characters had their segments truncated")
+            logging.info(f"{n_labeled_samples} labeled samples, {n_missed_samples} samples removed because character "
+                         "did not have any mentions or utterances")
+            logging.info(f"{n_samples} samples, {len(character_batches)} batches")
+            logging.info(f"tropes per batch: avg = {np.mean(n_tropes_batch_arr):.1f} "
+                         f"[{min(n_tropes_batch_arr)}, {max(n_tropes_batch_arr)}]")
+            logging.info(f"fraction positive samples per batch = {np.mean(frac_pos_tropes_batch_arr):.1f} "
+                  f"[{min(frac_pos_tropes_batch_arr):.1f}, {max(frac_pos_tropes_batch_arr):.1f}]\n")
             character_batches_arr.append(character_batches)
         return character_batches_arr

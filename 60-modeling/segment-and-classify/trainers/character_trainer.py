@@ -19,7 +19,6 @@ def run(lbl,
         chatter:Chatter,
         trope_embeddings,
         trope_to_idx,
-        loss_function,
         max_tropes_per_batch):
     """run model and classifier on character segments batch"""
     batch_tropes = tensors["tropes"]
@@ -70,6 +69,9 @@ def run(lbl,
         mask = subbatch_labels != 100
         logits = logits[mask]
         labels = subbatch_labels[mask]
+        npos, nneg = (labels == 1).sum(), (labels == 0).sum()
+        pos_weight = torch.sqrt(nneg / npos) if npos else torch.tensor(1)
+        loss_function = BCEWithLogitsLoss(pos_weight=pos_weight)
         loss = loss_function(logits, labels)
         yield loss, logits_dict
 
@@ -96,9 +98,9 @@ def train(lbl,
 
     logging.info("\ncreating batches")
     trn_batches, dev_batches, tst_batches = chatter.batch_characters(characterid_to_tensors, max_tokens_per_batch)
+    logging.info("\n")
 
     # set up the loss function
-    loss_function = BCEWithLogitsLoss()
     tot_trn_batches = batches_per_epoch * n_epochs
     n_trn_batches = len(trn_batches)
     n_iter = tot_trn_batches // n_trn_batches
@@ -109,7 +111,9 @@ def train(lbl,
         logging.info(f"Epoch {epoch + 1}")
         train_loss_arr = []
         valid_loss_arr = []
+        test_loss_arr = []
         valid_logits_dict = {}
+        test_logits_dict = {}
 
         # =================================================================
         # start training
@@ -130,7 +134,6 @@ def train(lbl,
                                          chatter,
                                          trope_embeddings,
                                          trope_to_idx,
-                                         loss_function,
                                          max_tropes_per_batch):
                 loss.backward()
                 optimizer.step()
@@ -152,7 +155,10 @@ def train(lbl,
         encoder.eval()
         model.eval()
         classifier.eval()
-        eval_batches = random.sample(dev_batches, min(batches_eval, len(dev_batches)))
+        if batches_eval is None:
+            eval_batches = dev_batches
+        else:
+            eval_batches = random.sample(dev_batches, min(batches_eval, len(dev_batches)))
         tbar = tqdm.tqdm(eval_batches, unit="batch segment")
         with torch.no_grad():
             for tensors in tbar:
@@ -164,7 +170,41 @@ def train(lbl,
                                              chatter,
                                              trope_embeddings,
                                              trope_to_idx,
-                                             loss_function,
+                                             max_tropes_per_batch):
+                    test_loss_arr.append(loss.item())
+                    avg_test_loss = np.mean(test_loss_arr)
+                    test_logits_dict.update(logits_dict)
+                    tbar.set_description(f"test-loss: batch={loss.item():.4f} avg={avg_test_loss:.4f}")
+        test_labels = []
+        test_logits = []
+        for key, val in test_logits_dict.items():
+            test_labels.append(chatter.characterid_and_trope_to_label[key])
+            test_logits.append(val)
+        test_logits = np.array(test_logits)
+        test_labels = np.array(test_labels)
+        accuracy, precision, recall, f1 = evaluation.evaluate(test_logits, test_labels)
+        avg_test_loss = np.mean(test_loss_arr)
+        logging.info(f"avg-test-loss = {avg_test_loss:.4f} accuracy = {accuracy:.1f}, "
+                     f"precision = {precision:.1f}, recall = {recall:.1f}, f1 = {f1:.1f}")
+        # =================================================================
+        # end evaluation
+
+        # =================================================================
+        # start testing
+        encoder.eval()
+        model.eval()
+        classifier.eval()
+        tbar = tqdm.tqdm(tst_batches, unit="batch segment")
+        with torch.no_grad():
+            for tensors in tbar:
+                for loss, logits_dict in run(lbl,
+                                             encoder,
+                                             model,
+                                             classifier,
+                                             tensors,
+                                             chatter,
+                                             trope_embeddings,
+                                             trope_to_idx,
                                              max_tropes_per_batch):
                     valid_loss_arr.append(loss.item())
                     avg_valid_loss = np.mean(valid_loss_arr)
@@ -182,6 +222,6 @@ def train(lbl,
         logging.info(f"avg-valid-loss = {avg_valid_loss:.4f} accuracy = {accuracy:.1f}, "
                      f"precision = {precision:.1f}, recall = {recall:.1f}, f1 = {f1:.1f}")
         # =================================================================
-        # end evaluation
+        # end testing
 
         logging.info(f"Epoch {epoch + 1} done\n")

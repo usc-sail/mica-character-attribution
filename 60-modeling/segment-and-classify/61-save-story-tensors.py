@@ -13,7 +13,7 @@ from absl import flags
 from absl import logging
 
 FLAGS = flags.FLAGS
-flags.DEFINE_enum("model", default=None, enum_values=["roberta", "longformer"], help="model")
+flags.DEFINE_enum("model", default=None, enum_values=["roberta", "longformer", "llama"], help="model")
 
 def save_story_tensors(_):
     model = FLAGS.model
@@ -24,8 +24,13 @@ def save_story_tensors(_):
     map_df = pd.read_csv(mapfile, index_col=None, dtype=str)
     if model == "roberta":
         tokenizer = pretrained.Tokenizer.roberta()
+        add_prefix_space = False
     elif model == "longformer":
         tokenizer = pretrained.Tokenizer.longformer()
+        add_prefix_space = False
+    elif model == "llama":
+        tokenizer = pretrained.Tokenizer.llama()
+        add_prefix_space = True
     log_dir = os.path.join(tensorsdir, "logs")
     os.makedirs(log_dir, exist_ok=True)
     logging.get_absl_handler().use_absl_log_file(program_name="save-story-tensors", log_dir=log_dir)
@@ -57,7 +62,7 @@ def save_story_tensors(_):
         logging.info(f"{i + 1:3d}/{len(imdb_ids)}\nimdb-id = {imdb_id}")
         try:
             token_ids, attention_mask, mentions_idx, utterances_idx, names_idx = tensorize.create_tensors(
-                tokenizer, imdb_characters, segments_df, mentions_df, utterances_df)
+                tokenizer, imdb_characters, segments_df, mentions_df, utterances_df, add_prefix_space=add_prefix_space)
             imdb_tensors_dir = os.path.join(tensorsdir, imdb_id)
             os.makedirs(imdb_tensors_dir, exist_ok=True)
             torch.save(token_ids, os.path.join(imdb_tensors_dir, "token-ids.pt"))
