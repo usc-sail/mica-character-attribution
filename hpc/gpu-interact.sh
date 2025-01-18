@@ -11,7 +11,7 @@ then
     --ntasks=1 \
     --cpus-per-task=16 \
     --partition=gpu \
-    --gres=gpu:a100:1 \
+    --gres=gpu:a100:$2 \
     --constraint=a100-80gb
 else
     salloc \
@@ -21,5 +21,5 @@ else
     --ntasks=1 \
     --cpus-per-task=16 \
     --partition=gpu \
-    --gres=gpu:$1:1
+    --gres=gpu:$1:$2
 fi
