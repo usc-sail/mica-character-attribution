@@ -1,5 +1,6 @@
 """Prompting utilities"""
 from absl import flags
+from absl import logging
 from google.api_core import retry
 from google import generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -17,10 +18,13 @@ flags.DEFINE_string("llama_model", default=None, help="Llama model (only provide
 flags.DEFINE_integer("batch_size", default=1, help="batch size")
 flags.DEFINE_integer("max_input_tokens", default=128, help="maximum tokens per input sequence in K (=2^10)")
 flags.DEFINE_integer("max_output_tokens", default=256, help="maximum tokens to generate")
+flags.DEFINE_string("padding", default="longest", help="padding strategy")
 flags.DEFINE_float("temperature", default=1, help="temperature for generations")
 flags.DEFINE_bool("bf16", default=False, help="use brain float-16 precision (default=float-16)")
 flags.DEFINE_bool("load_4bit", default=False, help="load in 4 bit")
 flags.DEFINE_bool("load_8bit", default=False, help="load in 8 bit")
+flags.DEFINE_bool("stream", default=False, help="stream output")
+flags.DEFINE_string("device", default="auto", help="cuda device to use")
 
 def models_checker(args):
     gemini = args["gemini_model"] is not None
@@ -52,7 +56,7 @@ class TextDataset(Dataset):
 class Gemini:
     """Gemini generator"""
     def __init__(self, system_instr):
-        print("configuring Gemini API")
+        logging.info("configuring Gemini API")
         gemini_key_file = FLAGS.gemini_key
         with open(gemini_key_file) as fr:
             gemini_api_key = fr.read().strip()
@@ -72,7 +76,7 @@ class Gemini:
                            for prompt in tqdm.tqdm(prompts, desc="counting tokens")]
             cost = (sum(ntokens_arr) * input_token_rate
                     + len(prompts) * FLAGS.max_output_tokens * output_token_rate)/(1<<17)
-            print(f"estimated cost = ${cost:.2f}")
+            logging.info(f"estimated cost = ${cost:.2f}")
             user_input = input("Do you want to proceed with prompting? [y/n] ")
             if user_input.lower().strip() != "y":
                 sys.exit(0)
@@ -96,13 +100,15 @@ class Gemini:
                 response = (f"ERROR: prompt-feedback = {output.prompt_feedback} "
                             f"finish-reason = {output.candidates[0].finish_reason} "
                             f"safety-ratings = {output.candidates[0].safety_ratings}")
+            if FLAGS.stream:
+                yield response
             responses.append(response)
         return responses
 
 class Llama:
     """Llama generator"""
     def __init__(self):
-        print("instantiating model")
+        logging.info("instantiating model")
         compute_dtype = torch.bfloat16 if FLAGS.bf16 else torch.float16
         if FLAGS.load_4bit:
             quantization_config = BitsAndBytesConfig(load_in_4bit=True,
@@ -117,9 +123,9 @@ class Llama:
         model = AutoModelForCausalLM.from_pretrained(f"meta-llama/{FLAGS.llama_model}",
                                                      torch_dtype=compute_dtype,
                                                      quantization_config=quantization_config,
-                                                     device_map="auto",
+                                                     device_map=FLAGS.device,
                                                      attn_implementation="flash_attention_2")
-        print("instantiating tokenizer")
+        logging.info("instantiating tokenizer")
         length = (1 << 10) * FLAGS.max_input_tokens
         self.tokenizer = AutoTokenizer.from_pretrained(f"meta-llama/{FLAGS.llama_model}",
                                                        padding_side="left",
@@ -127,7 +133,7 @@ class Llama:
                                                        model_max_length=length)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        print("instantiating pipeline")
+        logging.info("instantiating pipeline")
         self.generator = pipeline(task="text-generation", model=model, tokenizer=self.tokenizer)
 
     def __call__(self, prompts, system_instr, **kwargs):
@@ -141,11 +147,16 @@ class Llama:
                                                temperature=FLAGS.temperature,
                                                return_full_text=False,
                                                max_new_tokens=FLAGS.max_output_tokens,
+                                               padding=FLAGS.padding,
+                                               truncation=True,
                                                **kwargs),
                                 desc="prompting",
                                 total=len(prompt_dataset),
                                 miniters=1):
-            responses.append(output[0]["generated_text"])
+            response = output[0]["generated_text"]
+            if FLAGS.stream:
+                yield response
+            responses.append(response)
             sys.stdout.flush()
         return responses
         
