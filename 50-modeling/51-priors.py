@@ -21,7 +21,8 @@ FLAGS = flags.FLAGS
 
 def evaluate_response():
     """Evaluate the prior knowledge of the models"""
-    output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{FLAGS.model}")
+    modelname = FLAGS.gemini_model if FLAGS.gemini_model is not None else FLAGS.llama_model
+    output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{modelname}")
     acc_arr, prec_arr, rec_arr, f1_arr = [], [], [], []
     for file in os.listdir(output_dir):
         if file.endswith(".csv"):
@@ -48,7 +49,7 @@ def evaluate_response():
     print(f"recall: mean={np.mean(rec_arr):.3f} std={np.std(rec_arr):.4f}")
     print(f"f1: mean={np.mean(f1_arr):.3f} std={np.std(f1_arr):.4f}")
 
-def prompt_priors(_):
+def prompt_priors():
     """Prompt models to find prior knowledge"""
     # read data
     print("read data")
@@ -56,7 +57,8 @@ def prompt_priors(_):
     map_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv"), index_col=None, dtype=str)
     metadata_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/movie-metadata.csv"), index_col=None, dtype=str)
     tropes_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/tropes.csv"), index_col=None)
-    output_dir = os.path.join(datadirs.datadir, f"50-prompting/priors/{FLAGS.model}")
+    modelname = FLAGS.gemini_model if FLAGS.gemini_model is not None else FLAGS.llama_model
+    output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{modelname}")
 
     # process data
     print("process data")
@@ -98,7 +100,7 @@ def prompt_priors(_):
 
     # instantiate generator
     print("instantiating generator")
-    if FLAGS["gemini-model"].value is not None:
+    if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
     else:
         generator = generation.Llama()
@@ -119,7 +121,7 @@ def prompt_priors(_):
 
     # prompt
     for i in range(1, FLAGS.runs + 1):
-        if FLAGS["gemini-model"].value is not None:
+        if FLAGS.gemini_model is not None:
             responses = generator(prompts)
         else:
             responses = generator(prompts, system_instr)
