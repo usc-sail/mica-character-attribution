@@ -11,7 +11,7 @@ pip install accelerate
 pip install bitsandbytes
 pip install sentencepiece
 
-pip install pytorch torchvision torchaudio
+pip install torch torchvision torchaudio
 absl-py
 pandas
 transformers
@@ -19,8 +19,10 @@ accelerate
 deepspeed
 bitsandbytes
 sentencepiece
+pip install flash-attn --no-build-isolation
 google-generativeai
 google-cloud-aiplatform
 scikit-learn
 jupyterlab
 ipywidgets
+jsonlines

@@ -1,0 +1,110 @@
+LlamaForCausalLM(
+  (model): LlamaModel(
+    (embed_tokens): Embedding(128256, 4096)
+    (layers): ModuleList(
+      (0-31): 32 x LlamaDecoderLayer(
+        (self_attn): LlamaAttention(
+          (q_proj): Linear(in_features=4096, out_features=4096, bias=False)
+          (k_proj): Linear(in_features=4096, out_features=1024, bias=False)
+          (v_proj): Linear(in_features=4096, out_features=1024, bias=False)
+          (o_proj): Linear(in_features=4096, out_features=4096, bias=False)
+        )
+        (mlp): LlamaMLP(
+          (gate_proj): Linear(in_features=4096, out_features=14336, bias=False)
+          (up_proj): Linear(in_features=4096, out_features=14336, bias=False)
+          (down_proj): Linear(in_features=14336, out_features=4096, bias=False)
+          (act_fn): SiLU()
+        )
+        (input_layernorm): LlamaRMSNorm((4096,), eps=1e-05)
+        (post_attention_layernorm): LlamaRMSNorm((4096,), eps=1e-05)
+      )
+    )
+    (norm): LlamaRMSNorm((4096,), eps=1e-05)
+    (rotary_emb): LlamaRotaryEmbedding()
+  )
+  (lm_head): Linear(in_features=4096, out_features=128256, bias=False)
+)
+
+GPT2LMHeadModel(
+  (transformer): GPT2Model(
+    (wte): Embedding(50257, 768)
+    (wpe): Embedding(1024, 768)
+    (drop): Dropout(p=0.1, inplace=False)
+    (h): ModuleList(
+      (0-11): 12 x GPT2Block(
+        (ln_1): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+        (attn): GPT2Attention(
+          (c_attn): Conv1D(nf=2304, nx=768)
+          (c_proj): Conv1D(nf=768, nx=768)
+          (attn_dropout): Dropout(p=0.1, inplace=False)
+          (resid_dropout): Dropout(p=0.1, inplace=False)
+        )
+        (ln_2): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+        (mlp): GPT2MLP(
+          (c_fc): Conv1D(nf=3072, nx=768)
+          (c_proj): Conv1D(nf=768, nx=3072)
+          (act): NewGELUActivation()
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+      )
+    )
+    (ln_f): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+  )
+  (lm_head): Linear(in_features=768, out_features=50257, bias=False)
+)
+
+MistralForCausalLM(
+  (model): MistralModel(
+    (embed_tokens): Embedding(32768, 4096)
+    (layers): ModuleList(
+      (0-31): 32 x MistralDecoderLayer(
+        (self_attn): MistralAttention(
+          (q_proj): Linear(in_features=4096, out_features=4096, bias=False)
+          (k_proj): Linear(in_features=4096, out_features=1024, bias=False)
+          (v_proj): Linear(in_features=4096, out_features=1024, bias=False)
+          (o_proj): Linear(in_features=4096, out_features=4096, bias=False)
+        )
+        (mlp): MistralMLP(
+          (gate_proj): Linear(in_features=4096, out_features=14336, bias=False)
+          (up_proj): Linear(in_features=4096, out_features=14336, bias=False)
+          (down_proj): Linear(in_features=14336, out_features=4096, bias=False)
+          (act_fn): SiLU()
+        )
+        (input_layernorm): MistralRMSNorm((4096,), eps=1e-05)
+        (post_attention_layernorm): MistralRMSNorm((4096,), eps=1e-05)
+      )
+    )
+    (norm): MistralRMSNorm((4096,), eps=1e-05)
+    (rotary_emb): MistralRotaryEmbedding()
+  )
+  (lm_head): Linear(in_features=4096, out_features=32768, bias=False)
+)
+
+Gemma2ForCausalLM(
+  (model): Gemma2Model(
+    (embed_tokens): Embedding(256000, 3584, padding_idx=0)
+    (layers): ModuleList(
+      (0-41): 42 x Gemma2DecoderLayer(
+        (self_attn): Gemma2Attention(
+          (q_proj): Linear(in_features=3584, out_features=4096, bias=False)
+          (k_proj): Linear(in_features=3584, out_features=2048, bias=False)
+          (v_proj): Linear(in_features=3584, out_features=2048, bias=False)
+          (o_proj): Linear(in_features=4096, out_features=3584, bias=False)
+        )
+        (mlp): Gemma2MLP(
+          (gate_proj): Linear(in_features=3584, out_features=14336, bias=False)
+          (up_proj): Linear(in_features=3584, out_features=14336, bias=False)
+          (down_proj): Linear(in_features=14336, out_features=3584, bias=False)
+          (act_fn): PytorchGELUTanh()
+        )
+        (input_layernorm): Gemma2RMSNorm((3584,), eps=1e-06)
+        (post_attention_layernorm): Gemma2RMSNorm((3584,), eps=1e-06)
+        (pre_feedforward_layernorm): Gemma2RMSNorm((3584,), eps=1e-06)
+        (post_feedforward_layernorm): Gemma2RMSNorm((3584,), eps=1e-06)
+      )
+    )
+    (norm): Gemma2RMSNorm((3584,), eps=1e-06)
+    (rotary_emb): Gemma2RotaryEmbedding()
+  )
+  (lm_head): Linear(in_features=3584, out_features=256000, bias=False)
+)
