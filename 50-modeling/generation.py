@@ -23,13 +23,13 @@ flags.DEFINE_float("temperature", default=1, help="temperature for generations")
 flags.DEFINE_bool("bf16", default=False, help="use brain float-16 precision (default=float-16)")
 flags.DEFINE_bool("load_4bit", default=False, help="load in 4 bit")
 flags.DEFINE_bool("load_8bit", default=False, help="load in 8 bit")
-flags.DEFINE_bool("stream", default=False, help="stream output")
+flags.DEFINE_bool("flash_attn", default=False, help="use flash-attention")
 flags.DEFINE_string("device", default="auto", help="cuda device to use")
 
 def models_checker(args):
     gemini = args["gemini_model"] is not None
     llama = args["llama_model"] is not None
-    return (llama and not gemini) or (not llama and gemini)
+    return not (gemini and llama)
 
 def key_checker(args):
     gemini = args["gemini_model"] is not None
@@ -42,6 +42,15 @@ flags.register_multi_flags_validator(["gemini_model", "gemini_key"], key_checker
                                      message="Provide API key file if you are using gemini model")
 
 FLAGS = flags.FLAGS
+
+def modelname():
+    if FLAGS.llama_model is not None:
+        bf16 = "-bf16" if FLAGS.bf16 else ""
+        quant = "-4bit" if FLAGS.load_4bit else "-8bit" if FLAGS.load_8bit else ""
+        return f"{FLAGS.llama_model}{bf16}{quant}"
+    if FLAGS.gemini_model is not None:
+        return FLAGS.gemini_model
+    raise ValueError("model not provided")
 
 class TextDataset(Dataset):
     def __init__(self, texts):
@@ -88,7 +97,6 @@ class Gemini:
         generation_config = genai.GenerationConfig(temperature=FLAGS.temperature,
                                                    max_output_tokens=FLAGS.max_output_tokens)
         request_opts = genai.types.RequestOptions(retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300))
-        responses = []
         for prompt in tqdm.tqdm(prompts, desc="prompting"):
             output = self.model.generate_content(prompt,
                                                  safety_settings=safety_settings,
@@ -97,13 +105,8 @@ class Gemini:
             try:
                 response = output.candidates[0].content.parts[0].text
             except Exception:
-                response = (f"ERROR: prompt-feedback = {output.prompt_feedback} "
-                            f"finish-reason = {output.candidates[0].finish_reason} "
-                            f"safety-ratings = {output.candidates[0].safety_ratings}")
-            if FLAGS.stream:
-                yield response
-            responses.append(response)
-        return responses
+                response = "ERROR"
+            yield response
 
 class Llama:
     """Llama generator"""
@@ -124,7 +127,8 @@ class Llama:
                                                      torch_dtype=compute_dtype,
                                                      quantization_config=quantization_config,
                                                      device_map=FLAGS.device,
-                                                     attn_implementation="flash_attention_2")
+                                                     attn_implementation=("flash_attention_2" if FLAGS.flash_attn else
+                                                                          "sdpa"))
         logging.info("instantiating tokenizer")
         length = (1 << 10) * FLAGS.max_input_tokens
         self.tokenizer = AutoTokenizer.from_pretrained(f"meta-llama/{FLAGS.llama_model}",
@@ -137,7 +141,6 @@ class Llama:
         self.generator = pipeline(task="text-generation", model=model, tokenizer=self.tokenizer)
 
     def __call__(self, prompts, system_instr, **kwargs):
-        responses = []
         messages = [[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
                     for prompt in prompts]
         prompts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -154,9 +157,5 @@ class Llama:
                                 total=len(prompt_dataset),
                                 miniters=1):
             response = output[0]["generated_text"]
-            if FLAGS.stream:
-                yield response
-            responses.append(response)
             sys.stdout.flush()
-        return responses
-        
+            yield response        

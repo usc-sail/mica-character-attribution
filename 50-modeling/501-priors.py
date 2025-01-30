@@ -1,8 +1,8 @@
 """Prompt to find the prior knowledge of the model
 
 Example Usage:
-python 51-priors.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_output_tokens 256 --temperature 1
-python 51-priors.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 256 --temperature 1
+python 501-priors.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_output_tokens 256 --temperature 1
+python 501-priors.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 256 --temperature 1
 """
 import datadirs
 import generation
@@ -15,14 +15,14 @@ import pandas as pd
 import re
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
-flags.DEFINE_integer("runs", default=5, help="number of runs")
-flags.DEFINE_bool("evaluate", default=False, help="evaluate the response")
+flags.DEFINE_integer("runs", default=1, help="number of runs")
+flags.DEFINE_string("evaluation_dir", default=None, help=("directory containing response csv files that we evaluate, "
+                                                          "give path relative to 50-modeling/priors"))
 FLAGS = flags.FLAGS
 
 def evaluate_response():
     """Evaluate the prior knowledge of the models"""
-    modelname = FLAGS.gemini_model if FLAGS.gemini_model is not None else FLAGS.llama_model
-    output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{modelname}")
+    output_dir = os.path.join(datadirs.datadir, "50-modeling/priors", FLAGS.evaluation_dir)
     acc_arr, prec_arr, rec_arr, f1_arr = [], [], [], []
     for file in os.listdir(output_dir):
         if file.endswith(".csv"):
@@ -57,7 +57,7 @@ def prompt_priors():
     map_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv"), index_col=None, dtype=str)
     metadata_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/movie-metadata.csv"), index_col=None, dtype=str)
     tropes_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/tropes.csv"), index_col=None)
-    modelname = FLAGS.gemini_model if FLAGS.gemini_model is not None else FLAGS.llama_model
+    modelname = generation.modelname()
     output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{modelname}")
 
     # process data
@@ -107,7 +107,6 @@ def prompt_priors():
 
     # create prompts
     print("create prompts")
-    os.makedirs(output_dir, exist_ok=True)
     test_df = data_df[data_df["partition"] == "test"]
     rows, prompts = [], []
     for _, row in test_df.iterrows():
@@ -122,16 +121,17 @@ def prompt_priors():
     # prompt
     for i in range(1, FLAGS.runs + 1):
         if FLAGS.gemini_model is not None:
-            responses = generator(prompts)
+            responses = list(generator(prompts))
         else:
-            responses = generator(prompts, system_instr)
+            responses = list(generator(prompts, system_instr))
+        os.makedirs(output_dir, exist_ok=True)
         output_file = os.path.join(output_dir, f"run{i}.csv")
         output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "system-instr", "prompt"])
         output_df["response"] = responses
         output_df.to_csv(output_file, index=False)
 
 def main(_):
-    if FLAGS.evaluate:
+    if FLAGS.evaluation_dir:
         evaluate_response()
     else:
         prompt_priors()

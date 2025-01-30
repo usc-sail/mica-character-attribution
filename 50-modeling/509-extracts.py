@@ -1,11 +1,11 @@
 """Prompt to extract the relevant sections from the story
 
 Example Usage:
-python 53-extract.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_input_tokens 64 --max_output_tokens 3584
-python 53-extract.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 3584
-python 53-extract.py --device cuda:1
-python 53-extract.py --sample 10
-python 53-extract.py --slice 1 --nslices 16
+python 509-extracts.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_input_tokens 64 --max_output_tokens 3584
+python 509-extracts.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 3584
+python 509-extracts.py --device cuda:1
+python 509-extracts.py --sample 10
+python 509-extracts.py --slice 1 --nslices 16
 """
 import datadirs
 import generation
@@ -25,6 +25,7 @@ flags.DEFINE_enum("partition", default="test", enum_values=["train", "dev", "tes
 flags.DEFINE_integer("sample", default=None, help="sample data to prompt (only use for testing)")
 flags.DEFINE_integer("slice", default=None, help="data slice to prompt (default=complete data)")
 flags.DEFINE_integer("nslices", default=16, help="number of slices")
+flags.DEFINE_bool("stream", default=False, help="stream output")
 
 def flags_checker(args):
     issample = args["sample"] is not None
@@ -43,23 +44,17 @@ def extract_sections(_):
     map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
     movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
-    ext = FLAGS.partition
+    modelname = generation.modelname()
     if FLAGS.llama_model is not None:
-        modelname = FLAGS.llama_model
-        bf16 = "-bf16" if FLAGS.bf16 else ""
-        quant = "-4bit" if FLAGS.load_4bit else "-8bit" if FLAGS.load_8bit else ""
-        lenstr = f"-{FLAGS.max_input_tokens}K"
-        filename = f"{modelname}{bf16}{quant}{lenstr}{ext}"
-    else:
-        modelname = FLAGS.gemini_model
-        filename = f"{modelname}{ext}"
+        modelname = f"{modelname}-{FLAGS.max_input_tokens}K"
+    filename = f"{modelname}-{FLAGS.partition}"
     output_file = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}.jsonl")
     if FLAGS.slice is not None:
         output_dir = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}")
         os.makedirs(output_dir, exist_ok=True)
         progress_file = os.path.join(output_dir, "progress.txt")
-        host_progress_file = os.path.join(output_dir, f"{datadirs.host}-{FLAGS.device}.txt")
-        output_file = os.path.join(output_dir, f"{datadirs.host}-{FLAGS.device}.jsonl")
+        host_progress_file = os.path.join(output_dir, f"{datadirs.host}-{FLAGS.slice}-of-{FLAGS.nslices}.txt")
+        output_file = os.path.join(output_dir, f"{datadirs.host}-{FLAGS.slice}-of-{FLAGS.nslices}.jsonl")
         logging.get_absl_handler().use_absl_log_file(program_name="extract", log_dir=output_dir)
         logging.get_absl_handler().setFormatter(None)
         completed = set()
@@ -155,6 +150,7 @@ def extract_sections(_):
     for _, row in tqdm.tqdm(label_df.iterrows(), total=len(label_df), desc="creating prompts"):            
         characterid, trope, partition = row.character, row.trope, row.partition
         label = row.label if partition == "test" else row["tvtrope-label"]
+        label = int(label)
         name = characterid_to_name[characterid]
         definition = trope_to_definition[trope]
         for imdbid in characterid_to_imdbids[characterid]:
@@ -184,28 +180,29 @@ def extract_sections(_):
     # instantiate generator and prompt
     if FLAGS.llama_model is not None:
         generator = generation.Llama()
-        responses = generator(prompts, system_instr)
+        response_generator = generator(prompts, system_instr)
     else:
         generator = generation.Gemini(system_instr)
-        responses = generator(prompts)
+        response_generator = generator(prompts)
 
     if FLAGS.stream:
         if FLAGS.slice is not None:
             with jsonlines.open(output_file, "a", flush=True) as writer, open(host_progress_file, "a") as fw:
-                for item, response in zip(extract_data, responses):
-                    item["extract"] = response
+                for item, response in zip(extract_data, response_generator):
+                    item["text"] = response
                     writer.write(item)
                     characterid, trope, imdbid = item["character"], item["trope"], item["imdbid"]
                     fw.write(f"{datadirs.host} {characterid} {trope} {imdbid}\n")
                     fw.flush()
         else:
             with jsonlines.open(output_file, "a", flush=True) as writer:
-                for item, response in zip(extract_data, responses):
-                    item["extract"] = response
+                for item, response in zip(extract_data, response_generator):
+                    item["text"] = response
                     writer.write(item)
     else:
+        responses = list(response_generator)
         for item, response in zip(extract_data, responses):
-            item["extract"] = response
+            item["text"] = response
         with jsonlines.open(output_file, "w") as writer:
             writer.write_all(extract_data)
 
