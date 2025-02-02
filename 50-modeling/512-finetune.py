@@ -7,11 +7,13 @@ from absl import logging
 from accelerate import PartialState
 import collections
 from datasets import Dataset
+from datetime import datetime
 import jsonlines
 import numpy as np
 import os
 import pandas as pd
 from peft import LoraConfig, TaskType
+import random
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import torch
 import tqdm
@@ -19,7 +21,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from transformers import TrainerCallback, TrainingArguments, TrainerState, TrainerControl
 from transformers.trainer import EvalPrediction
 from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
-from typing import Dict
+from typing import Dict, List, Union, Tuple
 
 flags.DEFINE_string("data_file", default=None, help="jsonlines file of samples")
 flags.DEFINE_string("train_file", default=None, help="jsonlines file of training samples")
@@ -33,16 +35,16 @@ flags.DEFINE_bool("flash_attn", default=False, help="use flash attention (defaul
 flags.DEFINE_integer("dataset_batch_size", default=1024, help="dataset batch size for tokenization")
 flags.DEFINE_integer("train_batch_size", default=1, help="training batch size")
 flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
-flags.DEFINE_integer("eval_accumulation_steps", default=1, help=("number of prediction steps to accumulate the output "
-                                                                 "tensors for, before moving to CPU"))
+flags.DEFINE_integer("eval_accumulation_steps", default=1,
+                     help="number of prediction steps to accumulate the output tensors for, before moving to CPU")
 flags.DEFINE_float("lr", default=1e-5, help="learning rate")
-flags.DEFINE_string("optim", default="adamw_torch", help=("optimizer name (https://github.com/huggingface/"
+flags.DEFINE_string("optim", default="adamw_torch",help=("optimizer name (https://github.com/huggingface/"
                                                           "transformers/blob/main/src/transformers/training_args.py)"))
 flags.DEFINE_integer("max_seq_len", default=1024, help="maximum sequence length")
 flags.DEFINE_integer("train_steps", default=1024, help="training steps")
 flags.DEFINE_integer("eval_steps", default=64, help="training steps between successive evaluations")
 flags.DEFINE_integer("logging_steps", default=8, help="training steps between successive logging")
-flags.DEFINE_bool("eval_testset", default=False, help="evaluate test set every eval_steps (default=dev set)")
+flags.DEFINE_bool("also_eval_devset", default=False, help="evaluate dev set also every eval_steps")
 flags.DEFINE_multi_string("lora_target_module", default=["q_proj", "k_proj"], help="target modules to train using LoRA")
 flags.DEFINE_multi_string("lora_save_module", default=["lm_head", "embed_tokens"], help="modules to train normally")
 flags.DEFINE_integer("rank", default=8, help="lora rank")
@@ -57,18 +59,22 @@ flags.DEFINE_bool("save_predictions", default=False,
                   help="save predictions of eval set corresponding to the best metric value")
 
 def input_checker(args):
+    """Check at least one of data_file or train_file is given"""
     given_data = args["data_file"] is not None
     given_train = args["train_file"] is not None
     return (given_data and not given_train) or (not given_data and given_train)
 
-def dev_checker(args):
+def dev_test_checker(args):
+    """Check that dev_file and test_file are given if train_file is given"""
     given_train = args["train_file"] is not None
     given_dev = args["dev_file"] is not None
-    return not given_train or given_dev
+    given_test = args["test_file"] is not None
+    return not given_train or (given_dev and given_test)
 
 flags.register_multi_flags_validator(["data_file", "train_file"], input_checker,
                                      "Provide exactly one of data_file or train_file")
-flags.register_multi_flags_validator(["train_file", "dev_file"], dev_checker, "Provide dev_file")
+flags.register_multi_flags_validator(["train_file", "dev_file", "test_file"], dev_test_checker,
+                                     "Provide dev_file and test_file")
 
 FLAGS = flags.FLAGS
 
@@ -78,10 +84,16 @@ TEMPLATE = ("Given the definition of a character attribute or trope, the name of
             "\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$ \n\n ANSWER: $ANSWER$")
 ANSWER_TEMPLATE = " \n\n ANSWER:"
 
+random.seed(130194)
+
 class LoggingCallback(TrainerCallback):
-    def __init__(self, predictions_file):
+    """Callback class to log to file and save predictions"""
+    def __init__(self, predictions_file=None, logs_file=None):
         super().__init__()
         self.predictions_file = predictions_file
+        self.logs_writer = None
+        if logs_file is not None:
+            self.logs_writer = jsonlines.open(logs_file, mode="w", flush=True)
         self.eval_df = None
         self.best_metric_value = None
 
@@ -92,17 +104,29 @@ class LoggingCallback(TrainerCallback):
             for logkey, logvalue in logs.items():
                 logging.info(f"{logkey} = {logvalue:.6f}")
             logging.info("\n")
+            if self.logs_writer is not None:
+                logs["step"] = state.global_step
+                self.logs_writer.write(logs)
 
-    def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
-        if state.is_local_process_zero and FLAGS.save_predictions and (
-            self.best_metric_value is None or state.best_metric > self.best_metric_value):
+    def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl,
+                    metrics: Dict[str, float], **kwargs):
+        if (state.is_local_process_zero
+                and self.predictions_file is not None
+                and "eval_test_f1" in metrics
+                and (self.best_metric_value is None or state.best_metric > self.best_metric_value)):
             self.best_metric_value = state.best_metric
             logging.info(f"STEP {state.global_step}/{state.max_steps}")
             logging.info("saving predictions")
             self.eval_df.to_csv(self.predictions_file)
             logging.info("\n")
 
-def create_dataset(tokenizer, data, batch_size, max_seq_len):
+    def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        if self.logs_writer is not None:
+            self.logs_writer.close()
+
+def create_dataset(tokenizer: AutoTokenizer, data: List[Dict[str, Union[str, int]]], batch_size: int,
+                   max_seq_len: int) -> Tuple[Dataset, pd.DataFrame]:
+    """Create Dataset object and evaluation dataframe from data array"""
     texts = []
     rows = []
     for obj in data:
@@ -144,15 +168,22 @@ def create_dataset(tokenizer, data, batch_size, max_seq_len):
             attention_mask[i] = attention_mask[i][:start] + attention_mask[i][end:]
     return Dataset.from_dict({"input_ids": input_ids, "attention_mask": attention_mask}), df
 
-def preprocess_logits_for_metrics(logits, _):
+def preprocess_logits_for_metrics(logits: torch.Tensor, _) -> torch.Tensor:
+    """Preprocess logits to prepare for metrics computation
+    We use this functions to save space primarily, converting batch-size x seqlen x vocab-size tensors to batch-size
+    x seqlen tensors
+    """
     return logits.argmax(dim=-1)
 
-def compute_metrics(tokenizer, eval_df, callback: LoggingCallback, evalprediction: EvalPrediction):
+def compute_metrics(tokenizer: AutoTokenizer, test_df: pd.DataFrame, dev_df: pd.DataFrame, callback: LoggingCallback,
+                    evalprediction: EvalPrediction) -> Dict[str, float]:
+    """Compute metrics and save predictions to callback object"""
     labels = evalprediction.label_ids
     predictions = evalprediction.predictions
     rx, cx = np.where(labels != -100)
     predictions = list(map(lambda x: x.strip().lower(), tokenizer.batch_decode(predictions[rx, cx - 1].reshape(-1, 1))))
     predictions = list(map(lambda x: 1 if x == "yes" else 0 if x == "no" else np.nan, predictions))
+    eval_df = test_df if len(labels) == len(test_df) else dev_df
     eval_df["pred"] = predictions
     eval_df = eval_df.dropna(subset="pred")
     callback.eval_df = eval_df
@@ -177,14 +208,31 @@ def finetune(_):
 
     # set up logging
     if FLAGS.data_file is not None:
-        output_dir = FLAGS.data_file.replace("/", "-")[:-6]
+        input_dir = FLAGS.data_file.replace("/", "-")[:-6]
     else:
-        output_dir = FLAGS.train_file.replace("/", "-")[:-6]
-    experiments_dir = os.path.join(datadirs.datadir, "50-modeling/finetune", output_dir)
-    if FLAGS.logtofile and partial_state.is_local_main_process:
-        os.makedirs(experiments_dir, exist_ok=True)
-        logging.get_absl_handler().use_absl_log_file(program_name="finetune", log_dir=experiments_dir)
-        logging.get_absl_handler().setFormatter(None)
+        input_dir = FLAGS.train_file.replace("/", "-")[:-6]
+    model_dir = FLAGS.model.replace("/", "--")
+    if FLAGS.load_4bit:
+        model_dir += "-4bit"
+    elif FLAGS.load_8bit:
+        model_dir += "-8bit"
+    if FLAGS.bf16:
+        model_dir += "-bf16"
+    else:
+        model_dir += "-fp16"
+    datetime_dir = datetime.strftime(datetime.now(), "%Y%b%d-%H%M%S")
+    experiments_dir = os.path.join(datadirs.datadir, "50-modeling/finetune", input_dir, model_dir, datetime_dir)
+    logs_file = None
+    predictions_file = None
+    if partial_state.is_local_main_process:
+        if FLAGS.logtofile:
+            os.makedirs(experiments_dir, exist_ok=True)
+            logging.get_absl_handler().use_absl_log_file(program_name="finetune", log_dir=experiments_dir)
+            logging.get_absl_handler().setFormatter(None)
+            logs_file = os.path.join(experiments_dir, "logs.jsonl")
+        if FLAGS.save_predictions:
+            predictions_file = os.path.join(experiments_dir, "predictions.csv")
+    callback = LoggingCallback(predictions_file, logs_file)
 
     # log arguments
     if partial_state.is_local_main_process:
@@ -215,8 +263,8 @@ def finetune(_):
         logging.info(f"{'train-steps':30s} = {FLAGS.train_steps}")
         logging.info(f"{'eval-steps':30s} = {FLAGS.eval_steps}")
         logging.info(f"{'loggin-steps':30s} = {FLAGS.logging_steps}")
-        evalset = "test-set" if FLAGS.eval_testset else "dev-set"
-        logging.info(f"{'eval-set':30s} = {evalset}")
+        evalsets = "test-set, dev-set" if FLAGS.also_eval_devset else "test-set"
+        logging.info(f"{'eval-sets':30s} = {evalsets}")
         logging.info(f"{'LoRA target-modules':30s} = {FLAGS.lora_target_module}")
         logging.info(f"{'LoRA save-modules':30s} = {FLAGS.lora_save_module}")
         logging.info(f"{'LoRA rank':30s} = {FLAGS.rank}")
@@ -322,13 +370,13 @@ def finetune(_):
     # create datasets
     if partial_state.is_local_main_process:
         logging.info("creating datasets")
+    random.shuffle(train_data)
     train_dataset, _ = create_dataset(tokenizer, train_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len)
     dev_dataset, dev_df = create_dataset(tokenizer, dev_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len)
     test_dataset, test_df = create_dataset(tokenizer, test_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len)
-    if FLAGS.eval_testset:
-        eval_dataset, eval_df = test_dataset, test_df
-    else:
-        eval_dataset, eval_df = dev_dataset, dev_df
+    eval_datasets = {"test": test_dataset}
+    if FLAGS.also_eval_devset:
+        eval_datasets["dev"] = dev_dataset
 
     # create peft config
     lora_config = LoraConfig(task_type=TaskType.CAUSAL_LM,
@@ -365,18 +413,16 @@ def finetune(_):
     # create trainer
     if partial_state.is_local_main_process:
         logging.info("instantiating trainer")
-    predictions_file = os.path.join(experiments_dir, f"{os.getpid()}-predictions.csv")
-    callback = LoggingCallback(predictions_file)
     trainer = SFTTrainer(model=model,
                          args=config,
                          data_collator=DataCollatorForCompletionOnlyLM(response_template=ANSWER_TEMPLATE,
                                                                        tokenizer=tokenizer),
                          train_dataset=train_dataset,
-                         eval_dataset=eval_dataset,
+                         eval_dataset=eval_datasets,
                          processing_class=tokenizer,
                          peft_config=lora_config,
                          preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-                         compute_metrics=lambda x: compute_metrics(tokenizer, eval_df, callback, x),
+                         compute_metrics=lambda x: compute_metrics(tokenizer, test_df, dev_df, callback, x),
                          callbacks=[callback])
 
     # train
