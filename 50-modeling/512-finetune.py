@@ -37,6 +37,7 @@ flags.DEFINE_integer("train_batch_size", default=1, help="training batch size")
 flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
 flags.DEFINE_integer("eval_accumulation_steps", default=1,
                      help="number of prediction steps to accumulate the output tensors for, before moving to CPU")
+flags.DEFINE_bool("eval_on_start", default=False, help="evaluate before training begins")
 flags.DEFINE_float("lr", default=1e-5, help="learning rate")
 flags.DEFINE_string("optim", default="adamw_torch",help=("optimizer name (https://github.com/huggingface/"
                                                           "transformers/blob/main/src/transformers/training_args.py)"))
@@ -88,14 +89,17 @@ random.seed(130194)
 
 class LoggingCallback(TrainerCallback):
     """Callback class to log to file and save predictions"""
-    def __init__(self, predictions_file=None, logs_file=None):
+    def __init__(self, test_df: pd.DataFrame, dev_df: pd.DataFrame, experiments_dir: str, logs_file=None,
+                 save_predictions=False):
         super().__init__()
-        self.predictions_file = predictions_file
+        self.test_df = test_df
+        self.dev_df = dev_df
+        self.test_predictions_file = os.path.join(experiments_dir, "test-predictions.csv")
+        self.dev_predictions_file = os.path.join(experiments_dir, "dev-predictions.csv")
+        self.save_predictions = save_predictions
         self.logs_writer = None
         if logs_file is not None:
             self.logs_writer = jsonlines.open(logs_file, mode="w", flush=True)
-        self.eval_df = None
-        self.best_metric_value = None
 
     def on_log(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, logs: Dict[str, float],
                **kwargs):
@@ -110,14 +114,18 @@ class LoggingCallback(TrainerCallback):
 
     def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl,
                     metrics: Dict[str, float], **kwargs):
-        if (state.is_local_process_zero
-                and self.predictions_file is not None
-                and "eval_test_f1" in metrics
-                and (self.best_metric_value is None or state.best_metric > self.best_metric_value)):
-            self.best_metric_value = state.best_metric
+        if state.is_local_process_zero and self.save_predictions:
             logging.info(f"STEP {state.global_step}/{state.max_steps}")
-            logging.info("saving predictions")
-            self.eval_df.to_csv(self.predictions_file)
+            if "eval_test_f1" in metrics:
+                logging.info("saving test-set predictions")
+                eval_df = self.test_df
+                eval_predictions_file = self.test_predictions_file
+            else:
+                logging.info("saving dev-set predictions")
+                eval_df = self.dev_df
+                eval_predictions_file = self.dev_predictions_file
+            eval_df[f"pred-step{state.global_step}"] = eval_df["pred"]
+            eval_df.to_csv(eval_predictions_file, index=False)
             logging.info("\n")
 
     def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
@@ -125,7 +133,7 @@ class LoggingCallback(TrainerCallback):
             self.logs_writer.close()
 
 def create_dataset(tokenizer: AutoTokenizer, data: List[Dict[str, Union[str, int]]], batch_size: int,
-                   max_seq_len: int) -> Tuple[Dataset, pd.DataFrame]:
+                   max_seq_len: int, disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
     """Create Dataset object and evaluation dataframe from data array"""
     texts = []
     rows = []
@@ -142,7 +150,7 @@ def create_dataset(tokenizer: AutoTokenizer, data: List[Dict[str, Union[str, int
     df = pd.DataFrame(rows, columns=["character", "trope", "label"])
     input_ids, attention_mask = [], []
     n_batches = int(np.ceil(len(texts)/batch_size))
-    for i in tqdm.trange(n_batches, desc="tokenization"):
+    for i in tqdm.trange(n_batches, desc="tokenization", disable=disable_progress_bar):
         batch_texts = texts[batch_size * i: batch_size * (i + 1)]
         encoding = tokenizer(batch_texts, padding=False, add_special_tokens=True, return_overflowing_tokens=False,
                              return_length=False)
@@ -156,7 +164,7 @@ def create_dataset(tokenizer: AutoTokenizer, data: List[Dict[str, Union[str, int
     is_last_token_sp = yes_answer_sp_mask[-1] == 1
     yes_answer_size = len(yes_answer_sp_mask) - is_first_token_sp - is_last_token_sp
     no_answer_size = len(no_answer_sp_mask) - is_first_token_sp - is_last_token_sp
-    for i in tqdm.trange(len(input_ids), desc="truncation"):
+    for i in tqdm.trange(len(input_ids), desc="truncation", disable=disable_progress_bar):
         if len(input_ids[i]) > max_seq_len:
             if data[i]["label"] == 1:
                 start = -is_last_token_sp - yes_answer_size - (len(input_ids[i]) - max_seq_len)
@@ -183,10 +191,15 @@ def compute_metrics(tokenizer: AutoTokenizer, test_df: pd.DataFrame, dev_df: pd.
     rx, cx = np.where(labels != -100)
     predictions = list(map(lambda x: x.strip().lower(), tokenizer.batch_decode(predictions[rx, cx - 1].reshape(-1, 1))))
     predictions = list(map(lambda x: 1 if x == "yes" else 0 if x == "no" else np.nan, predictions))
-    eval_df = test_df if len(labels) == len(test_df) else dev_df
-    eval_df["pred"] = predictions
+    if len(labels) == len(test_df):
+        eval_df = test_df
+        eval_df["pred"] = predictions
+        callback.test_df["pred"] = eval_df["pred"]
+    else:
+        eval_df = dev_df
+        eval_df["pred"] = predictions
+        callback.dev_df["pred"] = eval_df["pred"]
     eval_df = eval_df.dropna(subset="pred")
-    callback.eval_df = eval_df
     n_samples = len(eval_df[["character", "trope"]].drop_duplicates())
     if len(eval_df) > 0:
         eval_group_df = eval_df.groupby(["character", "trope"]).agg({"label": lambda arr: arr.values[0],
@@ -223,16 +236,12 @@ def finetune(_):
     datetime_dir = datetime.strftime(datetime.now(), "%Y%b%d-%H%M%S")
     experiments_dir = os.path.join(datadirs.datadir, "50-modeling/finetune", input_dir, model_dir, datetime_dir)
     logs_file = None
-    predictions_file = None
     if partial_state.is_local_main_process:
         if FLAGS.logtofile:
             os.makedirs(experiments_dir, exist_ok=True)
             logging.get_absl_handler().use_absl_log_file(program_name="finetune", log_dir=experiments_dir)
             logging.get_absl_handler().setFormatter(None)
             logs_file = os.path.join(experiments_dir, "logs.jsonl")
-        if FLAGS.save_predictions:
-            predictions_file = os.path.join(experiments_dir, "predictions.csv")
-    callback = LoggingCallback(predictions_file, logs_file)
 
     # log arguments
     if partial_state.is_local_main_process:
@@ -371,12 +380,18 @@ def finetune(_):
     if partial_state.is_local_main_process:
         logging.info("creating datasets")
     random.shuffle(train_data)
-    train_dataset, _ = create_dataset(tokenizer, train_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len)
-    dev_dataset, dev_df = create_dataset(tokenizer, dev_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len)
-    test_dataset, test_df = create_dataset(tokenizer, test_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len)
+    train_dataset, _ = create_dataset(tokenizer, train_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
+                                      disable_progress_bar=not partial_state.is_local_main_process)
+    dev_dataset, dev_df = create_dataset(tokenizer, dev_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
+                                         disable_progress_bar=not partial_state.is_local_main_process)
+    test_dataset, test_df = create_dataset(tokenizer, test_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
+                                           disable_progress_bar=not partial_state.is_local_main_process)
     eval_datasets = {"test": test_dataset}
     if FLAGS.also_eval_devset:
         eval_datasets["dev"] = dev_dataset
+
+    # instantiate callback
+    callback = LoggingCallback(test_df, dev_df, experiments_dir, logs_file, FLAGS.save_predictions)
 
     # create peft config
     lora_config = LoraConfig(task_type=TaskType.CAUSAL_LM,
@@ -392,7 +407,7 @@ def finetune(_):
     config = SFTConfig(output_dir=experiments_dir,
                        eval_strategy="steps",
                        eval_steps=FLAGS.eval_steps,
-                       eval_on_start=True,
+                       eval_on_start=FLAGS.eval_on_start,
                        eval_accumulation_steps=FLAGS.eval_accumulation_steps,
                        per_device_train_batch_size=FLAGS.train_batch_size,
                        per_device_eval_batch_size=FLAGS.eval_batch_size,
