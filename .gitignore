@@ -162,3 +162,6 @@ cython_debug/
 *.code-workspace
 *.ipynb
 .vscode/
+
+# distributed training configs
+50-modeling/*_config.yaml
