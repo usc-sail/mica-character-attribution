@@ -32,7 +32,7 @@ flags.DEFINE_bool("bf16", default=False, help="use brain floating point (default
 flags.DEFINE_bool("load_4bit", default=False, help="do 4-bit QLoRA training")
 flags.DEFINE_bool("load_8bit", default=False, help="do 8-bit QLoRA training")
 flags.DEFINE_bool("flash_attn", default=False, help="use flash attention (default=scaled dot product 'sdpa')")
-flags.DEFINE_integer("dataset_batch_size", default=1024, help="dataset batch size for tokenization")
+flags.DEFINE_integer("dataset_batch_size", default=4096, help="dataset batch size for tokenization")
 flags.DEFINE_integer("train_batch_size", default=1, help="training batch size")
 flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
 flags.DEFINE_integer("eval_accumulation_steps", default=1,
@@ -82,7 +82,7 @@ FLAGS = flags.FLAGS
 TEMPLATE = ("Given the definition of a character attribute or trope, the name of a character, and a story or segments "
             "of a story where the character appears, speaks or is mentioned, answer 'yes' or 'no' if the character "
             "portrays or is associated with the attribute or trope in the story.\n\nATTRIBUTE: $ATTRIBUTE$"
-            "\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$ \n\n ANSWER: $ANSWER$")
+            "\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$. \n\n ANSWER: $ANSWER$")
 ANSWER_TEMPLATE = " \n\n ANSWER:"
 
 random.seed(130194)
@@ -289,7 +289,7 @@ def finetune(_):
         data_file = os.path.join(datadirs.datadir, "50-modeling", FLAGS.data_file)
         with jsonlines.open(data_file) as reader:
             data = list(reader)
-        if hasattr(data[0], "partition"):
+        if "partition" in data[0]:
             train_data = [sample for sample in data if sample["partition"] == "train"]
             dev_data = [sample for sample in data if sample["partition"] == "dev"]
             test_data = [sample for sample in data if sample["partition"] == "test"]
@@ -423,7 +423,7 @@ def finetune(_):
                        optim=FLAGS.optim,
                        max_seq_length=FLAGS.max_seq_len,
                        packing=False,
-                       metric_for_best_model=FLAGS.metric)
+                       metric_for_best_model=f"test_{FLAGS.metric}")
 
     # create trainer
     if partial_state.is_local_main_process:
