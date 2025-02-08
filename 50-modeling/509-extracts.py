@@ -44,9 +44,9 @@ def extract_sections(_):
     map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
     movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
-    modelname = generation.modelname()
+    modelname = f"{generation.modelname()}-out{FLAGS.max_output_tokens}"
     if FLAGS.llama_model is not None:
-        modelname = f"{modelname}-{FLAGS.max_input_tokens}K"
+        modelname = f"{modelname}-inp{FLAGS.max_input_tokens}K"
     filename = f"{modelname}-{FLAGS.partition}"
     output_file = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}.jsonl")
     if FLAGS.slice is not None:

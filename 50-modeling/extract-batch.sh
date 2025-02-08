@@ -13,6 +13,6 @@ cd /home1/sbaruah/mica-character-attribution
 source .venv/bin/activate
 cd 50-modeling
 CMD="python 509-extracts.py --partition train --nslices $2 --llama_model Llama-3.1-8B-Instruct --flash_attn \
- --batch_size 1 --max_input_tokens 64 --max_output_tokens 3584 --temperature 1 --stream"
+ --batch_size 1 --max_input_tokens 64 --max_output_tokens 1536 --temperature 1 --stream"
 $CMD --slice $1 --device cuda:0 &
 $CMD --slice $(($1+1)) --device cuda:1
