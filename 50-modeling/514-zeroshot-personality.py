@@ -1,8 +1,8 @@
-"""Zero-shot prompt personet dataset
+"""Zero-shot prompt Story2Personality
 
 Example Usage:
-    accelerate launch --config_file default_config.yaml 513-zeroshot-traits.py \
-        --model_name_or_path meta-llama/Llama-3.1-8B-Instruct --batch_size 24
+    accelerate launch --config_file default_config.yaml 514-zeroshot-personality.py \
+        --model_name_or_path meta-llama/Llama-3.1-8B-Instruct --batch_size 4
 """
 
 import datadirs
@@ -15,6 +15,7 @@ import json
 import math
 import os
 import pandas as pd
+import pickle
 import random
 import re
 import string
@@ -32,6 +33,17 @@ TEMPLATE = ("Given the definition of a character attribute or trope, the name of
             "portrays or is associated with the attribute or trope in the story.\n\nATTRIBUTE: $ATTRIBUTE$"
             "\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$. \n\n ANSWER: ")
 
+TYPE2DEF = {
+    "E": "",
+    "I": "",
+    "S": "",
+    "N": "",
+    "T": "",
+    "F": "",
+    "J": "",
+    "P": ""
+}
+
 def evaluate(df, k=1):
     """Evaluate the response dataframe"""
     n, N = 0, 0
@@ -45,16 +57,16 @@ def evaluate(df, k=1):
                 n += 1
     return n/N
 
-def zeroshot_traits(_):
-    """Zero-shot prompt personet dataset"""
+def zeroshot_personality(_):
+    """Zero-shot prompt Story2Personality Dataset"""
     accelerator = Accelerator()
 
     # read personet data
     accelerator.print("\nreading personet data")
-    filepath = os.path.join(datadirs.datadir, "PERSONET/test.jsonl")
-    output_dir = os.path.join(datadirs.datadir, "50-modeling/zeroshot-traits",
+    filepath = os.path.join(datadirs.datadir, "STORY2PERSONALITY/BERT.tok.pkl")
+    output_dir = os.path.join(datadirs.datadir, "50-modeling/zeroshot-personality",
                               FLAGS.model_name_or_path.replace("/", "--"))
-    personet = json.load(open(filepath))
+    story2personality = pickle.load(open(filepath, mode="rb"))
 
     # print template
     header = "=" * (80 - len("TEMPLATE"))
@@ -141,4 +153,4 @@ def zeroshot_traits(_):
                 print(f"accuracy@{k} = {accuracy:.3f}")
 
 if __name__ == '__main__':
-    app.run(zeroshot_traits)
+    app.run(zeroshot_personality)

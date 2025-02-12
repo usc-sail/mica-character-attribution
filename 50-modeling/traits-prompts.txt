@@ -1,0 +1,13 @@
+system_instr = """You are a character trait classification model for books.
+Given a character, a story segment where the character appears, and a list of personality traits, you can
+accurately answer which of the personality traits the character portrays."""
+template = """The character "$CHARACTER$" appears in the given story segment.
+Read the story segment carefully and choose which of the following personality traits does "$CHARACTER$" portray:
+$TRAITS$.
+Choose exactly one of the traits. Do not use synonyms. Do not use MarkDown.
+
+$STORY$
+
+Which personality trait does "$CHARACTER$" portray?
+Answer: """
+

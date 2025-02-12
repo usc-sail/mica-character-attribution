@@ -38,18 +38,18 @@ flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
 flags.DEFINE_integer("eval_accumulation_steps", default=1,
                      help="number of prediction steps to accumulate the output tensors for, before moving to CPU")
 flags.DEFINE_bool("eval_on_start", default=False, help="evaluate before training begins")
-flags.DEFINE_float("lr", default=1e-5, help="learning rate")
+flags.DEFINE_float("lr", default=2e-5, help="learning rate")
 flags.DEFINE_string("optim", default="adamw_torch",help=("optimizer name (https://github.com/huggingface/"
                                                           "transformers/blob/main/src/transformers/training_args.py)"))
 flags.DEFINE_integer("max_seq_len", default=1024, help="maximum sequence length")
 flags.DEFINE_integer("train_steps", default=1024, help="training steps")
-flags.DEFINE_integer("eval_steps", default=64, help="training steps between successive evaluations")
+flags.DEFINE_integer("eval_steps", default=32, help="training steps between successive evaluations")
 flags.DEFINE_integer("logging_steps", default=8, help="training steps between successive logging")
 flags.DEFINE_bool("also_eval_devset", default=False, help="evaluate dev set also every eval_steps")
 flags.DEFINE_multi_string("lora_target_module", default=["q_proj", "k_proj"], help="target modules to train using LoRA")
 flags.DEFINE_multi_string("lora_save_module", default=["lm_head", "embed_tokens"], help="modules to train normally")
-flags.DEFINE_integer("rank", default=8, help="lora rank")
-flags.DEFINE_integer("alpha", default=16, help="lora alpha")
+flags.DEFINE_integer("rank", default=32, help="lora rank")
+flags.DEFINE_integer("alpha", default=64, help="lora alpha")
 flags.DEFINE_float("dropout", default=0, help="dropout")
 flags.DEFINE_float("weight_decay", default=0, help="weight decay")
 flags.DEFINE_float("max_grad_norm", default=10, help="maximum gradient norm")
@@ -58,6 +58,7 @@ flags.DEFINE_enum("metric", default="f1", enum_values=["accuracy", "f1", "precis
 flags.DEFINE_bool("logtofile", default=False, help="log to file")
 flags.DEFINE_bool("save_predictions", default=False,
                   help="save predictions of eval set corresponding to the best metric value")
+flags.DEFINE_bool("save_model", default=False, help="save best model")
 
 def input_checker(args):
     """Check at least one of data_file or train_file is given"""
@@ -131,6 +132,10 @@ class LoggingCallback(TrainerCallback):
     def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
         if self.logs_writer is not None:
             self.logs_writer.close()
+
+    def on_save(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        if state.is_local_process_zero:
+            logging.info(f"model saved, best-metric = {state.best_metric:.3f}")
 
 def create_dataset(tokenizer: AutoTokenizer, data: List[Dict[str, Union[str, int]]], batch_size: int,
                    max_seq_len: int, disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
@@ -382,12 +387,13 @@ def finetune(_):
     random.shuffle(train_data)
     train_dataset, _ = create_dataset(tokenizer, train_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
                                       disable_progress_bar=not partial_state.is_local_main_process)
-    dev_dataset, dev_df = create_dataset(tokenizer, dev_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
-                                         disable_progress_bar=not partial_state.is_local_main_process)
     test_dataset, test_df = create_dataset(tokenizer, test_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
                                            disable_progress_bar=not partial_state.is_local_main_process)
     eval_datasets = {"test": test_dataset}
+    dev_df = None
     if FLAGS.also_eval_devset:
+        dev_dataset, dev_df = create_dataset(tokenizer, dev_data, FLAGS.dataset_batch_size, FLAGS.max_seq_len,
+                                             disable_progress_bar=not partial_state.is_local_main_process)
         eval_datasets["dev"] = dev_dataset
 
     # instantiate callback
@@ -417,13 +423,15 @@ def finetune(_):
                        max_steps=FLAGS.train_steps,
                        logging_strategy="steps",
                        logging_steps=FLAGS.logging_steps,
-                       save_strategy="no",
+                       save_strategy="best" if FLAGS.save_model else "no",
                        bf16=FLAGS.bf16,
                        fp16=not FLAGS.bf16,
                        optim=FLAGS.optim,
                        max_seq_length=FLAGS.max_seq_len,
                        packing=False,
-                       metric_for_best_model=f"test_{FLAGS.metric}")
+                       metric_for_best_model=f"test_{FLAGS.metric}",
+                       save_only_model=True,
+                       save_total_limit=1)
 
     # create trainer
     if partial_state.is_local_main_process:
@@ -445,6 +453,13 @@ def finetune(_):
         logging.info("\n\ntraining")
         logging.info("================================================================================================")
     trainer.train()
+
+    # remove empty experiments dir
+    try:
+        os.rmdir(experiments_dir)
+        logging.info(f"deleting {experiments_dir}")
+    except OSError:
+        pass
 
 if __name__ == '__main__':
     app.run(finetune)

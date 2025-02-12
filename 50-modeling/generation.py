@@ -1,20 +1,24 @@
 """Prompting utilities"""
+import datadirs
+
 from absl import flags
 from absl import logging
 from google.api_core import retry
 from google import generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import os
+import re
+import sys
 import torch
 from torch.utils.data import Dataset
 import tqdm
-import sys
 from transformers import pipeline, BitsAndBytesConfig, AutoTokenizer, AutoModelForCausalLM
 from vertexai.preview import tokenization
 
 flags.DEFINE_string("gemini_model", default=None, help="Gemini model")
 flags.DEFINE_string("gemini_key", default=None, help="Gemini key file")
 flags.DEFINE_bool("gemini_estimate_cost", default=False, help="Gemini estimate cost")
-flags.DEFINE_string("llama_model", default=None, help="Llama model (only provide the part after meta-llama)")
+flags.DEFINE_string("llama_model", default=None, help="Llama model or path to model directory")
 flags.DEFINE_integer("batch_size", default=1, help="batch size")
 flags.DEFINE_integer("max_input_tokens", default=128, help="maximum tokens per input sequence in K (=2^10)")
 flags.DEFINE_integer("max_output_tokens", default=256, help="maximum tokens to generate")
@@ -45,9 +49,15 @@ FLAGS = flags.FLAGS
 
 def modelname():
     if FLAGS.llama_model is not None:
+        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.llama_model)
+        if os.path.exists(model_name_or_path):
+            model_name_or_path = re.sub(os.path.join(datadirs.datadir, "50-modeling/finetune/"), "", model_name_or_path)
+            model_name_or_path = model_name_or_path.replace("/", "--")
+        else:
+            model_name_or_path = re.sub("meta-llama/", FLAGS.llama_model)
         bf16 = "-bf16" if FLAGS.bf16 else ""
         quant = "-4bit" if FLAGS.load_4bit else "-8bit" if FLAGS.load_8bit else ""
-        return f"{FLAGS.llama_model}{bf16}{quant}"
+        return f"{model_name_or_path}{bf16}{quant}"
     if FLAGS.gemini_model is not None:
         return FLAGS.gemini_model
     raise ValueError("model not provided")
@@ -64,7 +74,7 @@ class TextDataset(Dataset):
 
 class Gemini:
     """Gemini generator"""
-    def __init__(self, system_instr):
+    def __init__(self, system_instr=None):
         logging.info("configuring Gemini API")
         gemini_key_file = FLAGS.gemini_key
         with open(gemini_key_file) as fr:
@@ -123,7 +133,10 @@ class Llama:
             quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         else:
             quantization_config = None
-        model = AutoModelForCausalLM.from_pretrained(f"meta-llama/{FLAGS.llama_model}",
+        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.llama_model)
+        if not os.path.exists(model_name_or_path):
+            model_name_or_path = FLAGS.llama_model
+        model = AutoModelForCausalLM.from_pretrained(model_name_or_path,
                                                      torch_dtype=compute_dtype,
                                                      quantization_config=quantization_config,
                                                      device_map=FLAGS.device,
@@ -131,7 +144,7 @@ class Llama:
                                                                           "sdpa"))
         logging.info("instantiating tokenizer")
         length = (1 << 10) * FLAGS.max_input_tokens
-        self.tokenizer = AutoTokenizer.from_pretrained(f"meta-llama/{FLAGS.llama_model}",
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
                                                        padding_side="left",
                                                        truncation_side="right",
                                                        model_max_length=length)
@@ -140,10 +153,11 @@ class Llama:
         logging.info("instantiating pipeline")
         self.generator = pipeline(task="text-generation", model=model, tokenizer=self.tokenizer)
 
-    def __call__(self, prompts, system_instr, **kwargs):
-        messages = [[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
-                    for prompt in prompts]
-        prompts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    def __call__(self, prompts, system_instr=None, **kwargs):
+        if system_instr is not None:
+            messages = [[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
+                        for prompt in prompts]
+            prompts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         prompt_dataset = TextDataset(prompts)
         for output in tqdm.tqdm(self.generator(prompt_dataset,
                                                batch_size=FLAGS.batch_size,

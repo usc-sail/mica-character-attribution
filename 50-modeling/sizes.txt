@@ -1,0 +1,123 @@
+random
+250
+	50.0%-tile : words = 232.0, tokens = 336.0
+	90.0%-tile : words = 247.0, tokens = 387.0
+	95.0%-tile : words = 249.0, tokens = 402.8
+	99.0%-tile : words = 250.0, tokens = 439.0
+	99.5%-tile : words = 250.0, tokens = 451.0
+	MAX       : words = 250.0, tokens = 570.0
+
+500
+	50.0%-tile : words = 479.0, tokens = 689.5
+	90.0%-tile : words = 496.0, tokens = 773.0
+	95.0%-tile : words = 498.0, tokens = 806.0
+	99.0%-tile : words = 500.0, tokens = 873.0
+	99.5%-tile : words = 500.0, tokens = 889.5
+	MAX       : words = 500.0, tokens = 1068.0
+
+1000
+	50.0%-tile : words = 968.0, tokens = 1378.0
+	90.0%-tile : words = 996.0, tokens = 1533.0
+	95.0%-tile : words = 998.0, tokens = 1585.0
+	99.0%-tile : words = 1000.0, tokens = 1724.2
+	99.5%-tile : words = 1000.0, tokens = 1772.0
+	MAX       : words = 1000.0, tokens = 2117.0
+
+1500
+	50.0%-tile : words = 1447.0, tokens = 2031.5
+	90.0%-tile : words = 1495.0, tokens = 2280.5
+	95.0%-tile : words = 1498.0, tokens = 2349.8
+	99.0%-tile : words = 1500.0, tokens = 2525.8
+	99.5%-tile : words = 1500.0, tokens = 2629.6
+	MAX       : words = 1500.0, tokens = 2878.0
+
+2000
+	50.0%-tile : words = 1779.0, tokens = 2578.0
+	90.0%-tile : words = 1993.0, tokens = 2999.0
+	95.0%-tile : words = 1997.0, tokens = 3097.0
+	99.0%-tile : words = 2000.0, tokens = 3316.0
+	99.5%-tile : words = 2000.0, tokens = 3451.8
+	MAX       : words = 2000.0, tokens = 3684.0
+
+
+first
+250
+	50.0%-tile : words = 232.0, tokens = 340.0
+	90.0%-tile : words = 247.0, tokens = 392.0
+	95.0%-tile : words = 249.0, tokens = 407.0
+	99.0%-tile : words = 250.0, tokens = 444.8
+	99.5%-tile : words = 250.0, tokens = 469.5
+	MAX       : words = 250.0, tokens = 548.0
+
+500
+	50.0%-tile : words = 480.0, tokens = 696.0
+	90.0%-tile : words = 497.0, tokens = 780.0
+	95.0%-tile : words = 499.0, tokens = 808.0
+	99.0%-tile : words = 500.0, tokens = 879.5
+	99.5%-tile : words = 500.0, tokens = 925.6
+	MAX       : words = 500.0, tokens = 1131.0
+
+1000
+	50.0%-tile : words = 970.0, tokens = 1387.0
+	90.0%-tile : words = 996.0, tokens = 1543.0
+	95.0%-tile : words = 998.0, tokens = 1594.0
+	99.0%-tile : words = 1000.0, tokens = 1708.8
+	99.5%-tile : words = 1000.0, tokens = 1781.4
+	MAX       : words = 1000.0, tokens = 2184.0
+
+1500
+	50.0%-tile : words = 1444.5, tokens = 2043.0
+	90.0%-tile : words = 1494.0, tokens = 2291.0
+	95.0%-tile : words = 1497.0, tokens = 2366.0
+	99.0%-tile : words = 1500.0, tokens = 2507.8
+	99.5%-tile : words = 1500.0, tokens = 2564.9
+	MAX       : words = 1500.0, tokens = 3039.0
+
+2000
+	50.0%-tile : words = 1781.0, tokens = 2569.0
+	90.0%-tile : words = 1994.0, tokens = 3017.0
+	95.0%-tile : words = 1997.0, tokens = 3110.8
+	99.0%-tile : words = 2000.0, tokens = 3315.0
+	99.5%-tile : words = 2000.0, tokens = 3385.9
+	MAX       : words = 2000.0, tokens = 3815.0
+
+trope
+250
+	50.0%-tile : words = 224.0, tokens = 324.0
+	90.0%-tile : words = 246.0, tokens = 380.0
+	95.0%-tile : words = 248.0, tokens = 397.0
+	99.0%-tile : words = 250.0, tokens = 434.0
+	99.5%-tile : words = 250.0, tokens = 454.0
+	MAX       : words = 250.0, tokens = 738.0
+
+500
+	50.0%-tile : words = 473.0, tokens = 678.0
+	90.0%-tile : words = 496.0, tokens = 767.0
+	95.0%-tile : words = 498.0, tokens = 794.0
+	99.0%-tile : words = 500.0, tokens = 860.0
+	99.5%-tile : words = 500.0, tokens = 894.8
+	MAX       : words = 500.0, tokens = 1341.0
+
+1000
+	50.0%-tile : words = 965.0, tokens = 1371.0
+	90.0%-tile : words = 995.0, tokens = 1536.0
+	95.0%-tile : words = 998.0, tokens = 1587.0
+	99.0%-tile : words = 1000.0, tokens = 1714.0
+	99.5%-tile : words = 1000.0, tokens = 1774.8
+	MAX       : words = 1000.0, tokens = 2484.0
+
+1500
+	50.0%-tile : words = 1449.0, tokens = 2042.0
+	90.0%-tile : words = 1494.0, tokens = 2297.0
+	95.0%-tile : words = 1497.0, tokens = 2369.0
+	99.0%-tile : words = 1500.0, tokens = 2551.0
+	99.5%-tile : words = 1500.0, tokens = 2659.8
+	MAX       : words = 1500.0, tokens = 3416.0
+
+2000
+	50.0%-tile : words = 1906.0, tokens = 2659.0
+	90.0%-tile : words = 1993.0, tokens = 3042.0
+	95.0%-tile : words = 1997.0, tokens = 3136.0
+	99.0%-tile : words = 2000.0, tokens = 3391.0
+	99.5%-tile : words = 2000.0, tokens = 3529.0
+	MAX       : words = 2000.0, tokens = 4299.0
