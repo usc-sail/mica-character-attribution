@@ -2,80 +2,98 @@
 import datadirs
 
 from absl import flags
-from absl import logging
+from accelerate import Accelerator, PartialState
+from accelerate.utils import gather_object
 from google.api_core import retry
 from google import generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import math
 import os
 import re
 import sys
 import torch
-from torch.utils.data import Dataset
 import tqdm
-from transformers import pipeline, BitsAndBytesConfig, AutoTokenizer, AutoModelForCausalLM
+from transformers import BitsAndBytesConfig, AutoTokenizer, AutoModelForCausalLM
 from vertexai.preview import tokenization
 
+# GEMINI
 flags.DEFINE_string("gemini_model", default=None, help="Gemini model")
 flags.DEFINE_string("gemini_key", default=None, help="Gemini key file")
 flags.DEFINE_bool("gemini_estimate_cost", default=False, help="Gemini estimate cost")
-flags.DEFINE_string("llama_model", default=None, help="Llama model or path to model directory")
-flags.DEFINE_integer("batch_size", default=1, help="batch size")
-flags.DEFINE_integer("max_input_tokens", default=128, help="maximum tokens per input sequence in K (=2^10)")
-flags.DEFINE_integer("max_output_tokens", default=256, help="maximum tokens to generate")
-flags.DEFINE_string("padding", default="longest", help="padding strategy")
-flags.DEFINE_float("temperature", default=1, help="temperature for generations")
+
+# GPT
+flags.DEFINE_string("gpt_model", default=None, help="GPT model")
+
+# HUGGINGFACE
+flags.DEFINE_string("hf_model",
+                    default=None,
+                    help="Huggingface model or local path to model directory relative to datadir")
 flags.DEFINE_bool("bf16", default=False, help="use brain float-16 precision (default=float-16)")
 flags.DEFINE_bool("load_4bit", default=False, help="load in 4 bit")
 flags.DEFINE_bool("load_8bit", default=False, help="load in 8 bit")
-flags.DEFINE_bool("flash_attn", default=False, help="use flash-attention")
-flags.DEFINE_string("device", default="auto", help="cuda device to use")
+flags.DEFINE_enum("attn",
+                  default="sdpa",
+                  enum_values=["flash_attention_2", "sdpa", "eager"],
+                  help="attention implementation")
+
+# GENERATION STRATEGIES
+flags.DEFINE_bool("replace_system_role",
+                  default=False,
+                  help="substitute system role with user role if system role is not supported by tokenizer")
+flags.DEFINE_integer("batch_size", default=1, help="batch size")
+flags.DEFINE_integer("max_input_tokens", default=128, help="maximum tokens per input sequence in K (=2^10)")
+flags.DEFINE_integer("max_output_tokens", default=1, help="maximum tokens to generate")
+flags.DEFINE_enum("padding", default="longest", enum_values=["longest", "max_length"], help="padding strategy")
+flags.DEFINE_bool("do_sample", default=False, help="use sampling; otherwise use greedy decoding")
+flags.DEFINE_integer("top_k",
+                     default=None,
+                     help="number of highest probability vocabulary tokens to keep for top-k filtering")
+flags.DEFINE_float("top_p",
+                   default=None,
+                   help=("If set to float < 1, only the smallest set of most probable tokens with probabilities that "
+                         "add up to top_p or higher are kept for generation"))
+flags.DEFINE_float("temperature", default=1, help="temperature for generations")
 
 def models_checker(args):
     gemini = args["gemini_model"] is not None
-    llama = args["llama_model"] is not None
-    return not (gemini and llama)
+    hf = args["hf_model"] is not None
+    return not (gemini and hf)
 
 def key_checker(args):
     gemini = args["gemini_model"] is not None
     key = args["gemini_key"] is not None
     return not gemini or key
 
-flags.register_multi_flags_validator(["gemini_model", "llama_model"], models_checker,
-                                     message="Provide exactly one of gemini or llama models")
+flags.register_multi_flags_validator(["gpt_model", "gemini_model", "hf_model"], models_checker,
+                                     message="Provide exactly one of gemini or hf models")
 flags.register_multi_flags_validator(["gemini_model", "gemini_key"], key_checker,
                                      message="Provide API key file if you are using gemini model")
 
 FLAGS = flags.FLAGS
 
 def modelname():
-    if FLAGS.llama_model is not None:
-        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.llama_model)
+    if FLAGS.gpt_model is not None:
+        return FLAGS.gpt_model
+    if FLAGS.gemini_model is not None:
+        return FLAGS.gemini_model
+    if FLAGS.hf_model is not None:
+        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.hf_model)
         if os.path.exists(model_name_or_path):
-            model_name_or_path = re.sub(os.path.join(datadirs.datadir, "50-modeling/finetune/"), "", model_name_or_path)
+            model_name_or_path = re.sub(os.path.join(datadirs.datadir, "50-modeling/finetune/") + "/",
+                                        "",
+                                        model_name_or_path)
             model_name_or_path = model_name_or_path.replace("/", "--")
         else:
-            model_name_or_path = re.sub("meta-llama/", FLAGS.llama_model)
+            model_name_or_path = re.sub(r"^[^/]+/", "", FLAGS.hf_model)
         bf16 = "-bf16" if FLAGS.bf16 else ""
         quant = "-4bit" if FLAGS.load_4bit else "-8bit" if FLAGS.load_8bit else ""
         return f"{model_name_or_path}{bf16}{quant}"
-    if FLAGS.gemini_model is not None:
-        return FLAGS.gemini_model
     raise ValueError("model not provided")
-
-class TextDataset(Dataset):
-    def __init__(self, texts):
-        self.texts = texts
-
-    def __len__(self):
-        return len(self.texts)
-
-    def __getitem__(self, idx):
-        return self.texts[idx]
 
 class Gemini:
     """Gemini generator"""
     def __init__(self, system_instr=None):
-        logging.info("configuring Gemini API")
+        print("configuring Gemini API")
         gemini_key_file = FLAGS.gemini_key
         with open(gemini_key_file) as fr:
             gemini_api_key = fr.read().strip()
@@ -95,7 +113,7 @@ class Gemini:
                            for prompt in tqdm.tqdm(prompts, desc="counting tokens")]
             cost = (sum(ntokens_arr) * input_token_rate
                     + len(prompts) * FLAGS.max_output_tokens * output_token_rate)/(1<<17)
-            logging.info(f"estimated cost = ${cost:.2f}")
+            print(f"estimated cost = ${cost:.2f}")
             user_input = input("Do you want to proceed with prompting? [y/n] ")
             if user_input.lower().strip() != "y":
                 sys.exit(0)
@@ -118,10 +136,11 @@ class Gemini:
                 response = "ERROR"
             yield response
 
-class Llama:
-    """Llama generator"""
+class HF:
+    """Huggingface model generator"""
     def __init__(self):
-        logging.info("instantiating model")
+        self.partial_state = PartialState()
+        self.partial_state.print("instantiating model")
         compute_dtype = torch.bfloat16 if FLAGS.bf16 else torch.float16
         if FLAGS.load_4bit:
             quantization_config = BitsAndBytesConfig(load_in_4bit=True,
@@ -133,43 +152,61 @@ class Llama:
             quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         else:
             quantization_config = None
-        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.llama_model)
+        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.hf_model)
         if not os.path.exists(model_name_or_path):
-            model_name_or_path = FLAGS.llama_model
-        model = AutoModelForCausalLM.from_pretrained(model_name_or_path,
-                                                     torch_dtype=compute_dtype,
-                                                     quantization_config=quantization_config,
-                                                     device_map=FLAGS.device,
-                                                     attn_implementation=("flash_attention_2" if FLAGS.flash_attn else
-                                                                          "sdpa"))
-        logging.info("instantiating tokenizer")
-        length = (1 << 10) * FLAGS.max_input_tokens
+            model_name_or_path = FLAGS.hf_model
+        self.model = AutoModelForCausalLM.from_pretrained(model_name_or_path,
+                                                          torch_dtype=compute_dtype,
+                                                          quantization_config=quantization_config,
+                                                          device_map={"": self.partial_state.process_index},
+                                                          attn_implementation=FLAGS.attn)
+        self.partial_state.print(f"generation config: {self.model.generation_config}")
+        self.partial_state.print("instantiating tokenizer")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
                                                        padding_side="left",
-                                                       truncation_side="right",
-                                                       model_max_length=length)
+                                                       truncation_side="right")
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        logging.info("instantiating pipeline")
-        self.generator = pipeline(task="text-generation", model=model, tokenizer=self.tokenizer)
 
-    def __call__(self, prompts, system_instr=None, **kwargs):
+    def __call__(self, prompts, system_instr=None):
+        max_input_tokens = (1 << 10) * FLAGS.max_input_tokens
         if system_instr is not None:
-            messages = [[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
-                        for prompt in prompts]
+            if FLAGS.replace_system_role:
+                messages = [[{"role": "user", "content": f"{system_instr}\n{prompt}"}] for prompt in prompts]
+            else:
+                messages = [[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
+                            for prompt in prompts]
             prompts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-        prompt_dataset = TextDataset(prompts)
-        for output in tqdm.tqdm(self.generator(prompt_dataset,
-                                               batch_size=FLAGS.batch_size,
-                                               temperature=FLAGS.temperature,
-                                               return_full_text=False,
-                                               max_new_tokens=FLAGS.max_output_tokens,
-                                               padding=FLAGS.padding,
-                                               truncation=True,
-                                               **kwargs),
-                                desc="prompting",
-                                total=len(prompt_dataset),
-                                miniters=1):
-            response = output[0]["generated_text"]
-            sys.stdout.flush()
-            yield response        
+        self.partial_state.wait_for_everyone()
+        with self.partial_state.split_between_processes(prompts, apply_padding=True) as process_prompts:
+            n_batches = math.ceil(len(process_prompts)/FLAGS.batch_size)
+            process_responses = []
+            for i in tqdm.tqdm(list(range(n_batches)),
+                               desc="prompting",
+                               unit="batch",
+                               disable=not self.partial_state.is_main_process,
+                               miniters=1):
+                batch_prompts = process_prompts[i * FLAGS.batch_size: (i + 1) * FLAGS.batch_size]
+                batch_encoding = (self
+                                  .tokenizer(batch_prompts,
+                                             padding=FLAGS.padding,
+                                             truncation=True,
+                                             return_tensors="pt",
+                                             max_length=max_input_tokens)
+                                  .to(self.partial_state.device))
+                batch_output = self.model.generate(**batch_encoding,
+                                                   do_sample=FLAGS.do_sample,
+                                                   top_k=FLAGS.top_k,
+                                                   top_p=FLAGS.top_p,
+                                                   temperature=FLAGS.temperature,
+                                                   max_new_tokens=FLAGS.max_output_tokens,
+                                                   pad_token_id=self.tokenizer.pad_token_id,
+                                                   return_legacy_cache=True)
+                batch_output = batch_output[:,-FLAGS.max_output_tokens:]
+                batch_responses = self.tokenizer.batch_decode(batch_output, skip_special_tokens=True)
+                process_responses.extend(batch_responses)
+            responses = [process_responses]
+        responses_arr = gather_object(responses)
+        responses = [response for responses in responses_arr for response in responses]
+        responses = responses[:len(prompts)]
+        return responses

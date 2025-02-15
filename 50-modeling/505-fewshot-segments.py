@@ -1,13 +1,14 @@
 """Few-shot prompt the segments where character is mentioned to find whether character portrays the trope
 
 Example Usage:
-python 505-fewshot-segments.py --shots 2 --llama_model Llama-3.1-8B-Instruct --max_input_tokens 48 --max_output_tokens 4
+accelerate launch 505-fewshot-segments.py --shots 2 --hf_model meta-llama/Llama-3.1-8B-Instruct --max_output_tokens 1
 """
 import datadirs
 import generation
 
 from absl import app
 from absl import flags
+from accelerate import PartialState
 import numpy as np
 import os
 import pandas as pd
@@ -17,21 +18,29 @@ import string
 import tqdm
 
 flags.DEFINE_integer("shots", default=2, help="number of shots")
+flags.DEFINE_enum("example_selection_strategy",
+                  default="random",
+                  enum_values=["random", "character", "trope"],
+                  help="strategy used to select examples")
 flags.DEFINE_integer("runs", default=1, help="number of runs")
 FLAGS = flags.FLAGS
 
 def prompt(_):
     """Few-shot prompt the character segments to find character attribution"""
+    partial_state = PartialState()
+
     # get file paths
     segments_dir = os.path.join(datadirs.datadir, "50-modeling/segments")
     label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
     map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
     modelname = generation.modelname()
-    output_dir = os.path.join(datadirs.datadir, f"50-modeling/fewshot-segments/{modelname}-{FLAGS.shots}shot")
+    output_dir = os.path.join(
+        datadirs.datadir,
+        f"50-modeling/fewshot-segments/{modelname}-{FLAGS.shots}shot-{FLAGS.example_selection_strategy}")
 
     # read data
-    print("read data")
+    partial_state.print("read data")
     label_df = pd.read_csv(label_file, index_col=None)
     map_df = pd.read_csv(map_file, index_col=None, dtype=str)
     tropes_df = pd.read_csv(tropes_file, index_col=None)
@@ -41,8 +50,11 @@ def prompt(_):
     trope_to_definition = {}
     for _, row in tropes_df.iterrows():
         trope_to_definition[row.trope] = row.summary
-    for characterid, character_df in tqdm.tqdm(map_df.groupby("character"), total=len(map_df["character"].unique()),
-                                               unit="character", desc="reading segments"):
+    for characterid, character_df in tqdm.tqdm(map_df.groupby("character"),
+                                               total=len(map_df["character"].unique()),
+                                               unit="character",
+                                               desc="reading segments",
+                                               disable=not partial_state.is_main_process):
         characterid_to_imdbids[characterid] = character_df["imdb-id"].tolist()
         for imdbid, name in character_df[["imdb-id", "name"]].itertuples(index=False, name=None):
             characterid_and_imdbid_to_name[(characterid, imdbid)] = name
@@ -88,18 +100,18 @@ def prompt(_):
     system_instr = re.sub(r"\n[ ]*", "\n", system_instr)
     prompt_template = re.sub(r"\n[ ]*", "\n", prompt_template)
     example_template = re.sub(r"\n[ ]*", "\n", example_template)
-    print("system-instruction:======================================================================================")
-    print(system_instr)
-    print("=========================================================================================================\n")
-    print("prompt template:===========================================================================================")
-    print(prompt_template)
-    print("=========================================================================================================\n")
-    print("example template:==========================================================================================")
-    print(example_template)
-    print("=========================================================================================================\n")
+    partial_state.print("system-instruction:======================================================================================")
+    partial_state.print(system_instr)
+    partial_state.print("=========================================================================================================\n")
+    partial_state.print("prompt template:===========================================================================================")
+    partial_state.print(prompt_template)
+    partial_state.print("=========================================================================================================\n")
+    partial_state.print("example template:==========================================================================================")
+    partial_state.print(example_template)
+    partial_state.print("=========================================================================================================\n")
 
     # create prompts
-    print("creating prompts")
+    partial_state.print("creating prompts")
     rows = []
     test_df = label_df[label_df["partition"] == "test"]
     os.makedirs(output_dir, exist_ok=True)
@@ -119,19 +131,34 @@ def prompt(_):
         if n_segments == 0:
             missed_samples += 1
     output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "imdbid", "example"])
-    print(f"{missed_samples} samples missed because character does not have mentions")
+    partial_state.print(f"{missed_samples} samples missed because character does not have mentions")
 
     # select examples
     prompts = []
     for ix, row in output_df.iterrows():
+        character, trope = row["character"], row["trope"]
         n_positive_examples = int(np.ceil(FLAGS.shots/2))
         n_negative_examples = FLAGS.shots - n_positive_examples
-        positive_examples = (output_df.loc[(output_df.index != ix) & (output_df["label"] == 1), "example"]
-                             .sample(n_positive_examples).tolist())
-        positive_examples = [example.replace("$LABEL$", "Yes") for example in positive_examples]
-        negative_examples = (output_df.loc[(output_df.index != ix) & (output_df["label"] == 0), "example"]
-                             .sample(n_negative_examples).tolist())
-        negative_examples = [example.replace("$LABEL$", "No") for example in negative_examples]
+        random_positive_examples_df = output_df[(output_df.index != ix) & (output_df["label"] == 1)]
+        character_positive_examples_df = random_positive_examples_df[
+            random_positive_examples_df["character"] == character]
+        trope_positive_examples_df = random_positive_examples_df[random_positive_examples_df["trope"] == trope]
+        random_negative_examples_df = output_df[(output_df.index != ix) & (output_df["label"] == 0)]
+        character_negative_examples_df = random_negative_examples_df[
+            random_negative_examples_df["character"] == character]
+        trope_negative_examples_df = random_negative_examples_df[random_negative_examples_df["trope"] == trope]
+        positive_examples = random_positive_examples_df.sample(n_positive_examples)["example"].tolist()
+        if FLAGS.example_selection_strategy == "character" and (len(character_positive_examples_df) >= 
+                                                                n_positive_examples):
+            positive_examples = character_positive_examples_df.sample(n_positive_examples)["example"].tolist()
+        if FLAGS.example_selection_strategy == "trope" and (len(trope_positive_examples_df) >= n_positive_examples):
+            positive_examples = trope_positive_examples_df.sample(n_positive_examples)["example"].tolist()
+        negative_examples = random_negative_examples_df.sample(n_negative_examples)["example"].tolist()
+        if FLAGS.example_selection_strategy == "character" and (len(character_negative_examples_df) >= 
+                                                                n_negative_examples):
+            negative_examples = character_negative_examples_df.sample(n_negative_examples)["example"].tolist()
+        if FLAGS.example_selection_strategy == "trope" and (len(trope_negative_examples_df) >= n_negative_examples):
+            negative_examples = trope_negative_examples_df.sample(n_negative_examples)["example"].tolist()
         examples = positive_examples + negative_examples
         random.shuffle(examples)
         examples = [example.replace("$HEADER$", f"Example {i + 1}") for i, example in enumerate(examples)]
@@ -142,26 +169,27 @@ def prompt(_):
     output_df.drop(columns=["example"], inplace=True)
 
     # instantiate generator
-    print("instantiating generator")
+    partial_state.print("instantiating generator")
     if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
     else:
-        generator = generation.Llama()
+        generator = generation.HF()
 
     # prompt
     for i in range(FLAGS.runs):
-        print(f"run {i + 1}/{FLAGS.runs}")
+        partial_state.print(f"run {i + 1}/{FLAGS.runs}")
         if FLAGS.gemini_model is not None:
-            responses = list(generator(prompts))
+            responses = generator(prompts)
         else:
-            responses = list(generator(prompts, system_instr))
+            responses = generator(prompts, system_instr)
 
-        # save output
-        os.makedirs(output_dir, exist_ok=True)
-        output_df["response"] = responses
-        output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
-        output_file = os.path.join(output_dir, output_filename)
-        output_df.to_csv(output_file, index=False)
+        if partial_state.is_main_process:
+            # save output
+            os.makedirs(output_dir, exist_ok=True)
+            output_df["response"] = responses
+            output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
+            output_file = os.path.join(output_dir, output_filename)
+            output_df.to_csv(output_file, index=False)
 
 if __name__ == '__main__':
     app.run(prompt)

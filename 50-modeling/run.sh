@@ -4,12 +4,12 @@
 ## Learning Rate
 # LRS=(1e-5 2e-5 5e-5 1e-4)
 # for LR in "${LRS[@]}"; do
-#     accelerate launch --config_file deepspeed_config.yaml 512-finetune.py \
+#     accelerate launch --config_file deepspeed.yaml 512-finetune.py \
 #         --data_file contexts/25P-1000C-all-mpnet-base-v2-0.05NEG-0.05POS.jsonl \
 #         --max_seq_len 1800 \
 #         --model meta-llama/Llama-3.1-8B-Instruct \
 #         --load_4bit \
-#         --flash_attn \
+#         --attn flash_attention_2 \
 #         --train_batch_size 2 \
 #         --eval_batch_size 8 \
 #         --eval_on_start \
@@ -24,12 +24,12 @@
 ## LoRA Rank
 # RANKS=(128 64 32 16 8)
 # for RANK in "${RANKS[@]}"; do
-#     accelerate launch --config_file deepspeed_config.yaml 512-finetune.py \
+#     accelerate launch --config_file deepspeed.yaml 512-finetune.py \
 #         --data_file contexts/25P-1000C-all-mpnet-base-v2-0.05NEG-0.05POS.jsonl \
 #         --max_seq_len 1800 \
 #         --model meta-llama/Llama-3.1-8B-Instruct \
 #         --load_4bit \
-#         --flash_attn \
+#         --attn flash_attention_2 \
 #         --train_batch_size 2 \
 #         --eval_batch_size 8 \
 #         --eval_on_start \
@@ -46,12 +46,12 @@
 # # LoRA Alpha
 # ALPHAS=(64 16)
 # for ALPHA in "${ALPHAS[@]}"; do
-#     accelerate launch --config_file deepspeed_config.yaml 512-finetune.py \
+#     accelerate launch --config_file deepspeed.yaml 512-finetune.py \
 #         --data_file contexts/25P-1000C-all-mpnet-base-v2-0.05NEG-0.05POS.jsonl \
 #         --max_seq_len 1800 \
 #         --model meta-llama/Llama-3.1-8B-Instruct \
 #         --load_4bit \
-#         --flash_attn \
+#         --attn flash_attention_2 \
 #         --train_batch_size 2 \
 #         --eval_batch_size 8 \
 #         --eval_on_start \
@@ -66,8 +66,8 @@
 # done
 
 # Different sizes for strategy=trope neg-sim=-0.05 pos-sim=0.05
-CMD="accelerate launch --config_file deepspeed_config.yaml 512-finetune.py \
-     --model meta-llama/Llama-3.1-8B-Instruct --load_4bit --flash_attn \
+CMD="accelerate launch --config_file deepspeed.yaml 512-finetune.py \
+     --model meta-llama/Llama-3.1-8B-Instruct --load_4bit --attn flash_attention_2 \
      --lr 2e-5 --rank 32 --alpha 64 --logtofile --eval_on_start --save_predictions"
 WORDS=(250 500 1000 1500 2000)
 TOKENS=(500 1000 1800 2700 3500)

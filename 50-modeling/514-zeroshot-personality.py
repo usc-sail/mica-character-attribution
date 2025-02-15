@@ -11,7 +11,6 @@ from absl import app
 from absl import flags
 from accelerate import Accelerator
 from accelerate.utils import tqdm, gather_object
-import json
 import math
 import os
 import pandas as pd
@@ -33,17 +32,6 @@ TEMPLATE = ("Given the definition of a character attribute or trope, the name of
             "portrays or is associated with the attribute or trope in the story.\n\nATTRIBUTE: $ATTRIBUTE$"
             "\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$. \n\n ANSWER: ")
 
-TYPE2DEF = {
-    "E": "",
-    "I": "",
-    "S": "",
-    "N": "",
-    "T": "",
-    "F": "",
-    "J": "",
-    "P": ""
-}
-
 def evaluate(df, k=1):
     """Evaluate the response dataframe"""
     n, N = 0, 0
@@ -57,16 +45,29 @@ def evaluate(df, k=1):
                 n += 1
     return n/N
 
+def process_response(response):
+    match = re.search(r"\w+", response)
+    processed_response = ""
+    if match is not None:
+        processed_response = match.group(0).lower()
+    return processed_response
+
 def zeroshot_personality(_):
     """Zero-shot prompt Story2Personality Dataset"""
     accelerator = Accelerator()
 
-    # read personet data
-    accelerator.print("\nreading personet data")
+    # read story2personality data
+    accelerator.print("\nreading story2personality data")
     filepath = os.path.join(datadirs.datadir, "STORY2PERSONALITY/BERT.tok.pkl")
+    definition_filepath = os.path.join(datadirs.datadir, "STORY2PERSONALITY/definitions.txt")
     output_dir = os.path.join(datadirs.datadir, "50-modeling/zeroshot-personality",
                               FLAGS.model_name_or_path.replace("/", "--"))
     story2personality = pickle.load(open(filepath, mode="rb"))
+    personality2definition = {}
+    with open(definition_filepath) as fr:
+        lines = fr.read().strip().split("\n")
+    for i in range(0, len(lines), 2):
+        personality2definition[lines[i].strip()] = lines[i + 1].strip()
 
     # print template
     header = "=" * (80 - len("TEMPLATE"))
@@ -75,18 +76,18 @@ def zeroshot_personality(_):
 
     # creating prompts
     rows, prompts = [], []
-    for obj in tqdm(personet, unit="sample", desc="creating prompts"):
-        traits = obj["options"]
-        answer = ord(obj["answer"][1]) - ord("a")
-        text = "\n".join([obj["history"], obj["snippet_former_context"], obj["snippet_underlined"],
-                          obj["snippet_post_context"]])
-        for i, trait in enumerate(traits):
+    for obj in tqdm(story2personality, unit="sample", desc="creating prompts"):
+        utterances = "\n".join(list(set(obj["dialog_text"])))
+        mentions = "\n".join(list(set([item[-1] for item in obj["scene_text"]])))
+        text = f"UTTERANCES:\n{utterances}\n\nMENTIONS:\n{mentions}"
+        text = text.strip()
+        for personality, definition in personality2definition.items():
+            row = [obj["id"], obj["mbti_profile"], personality, obj[personality]]
             prompt = (TEMPLATE
-                      .replace("$CHARACTER$", obj["character"])
-                      .replace("$ATTRIBUTE$", trait)
+                      .replace("$CHARACTER$", obj["mbti_profile"])
+                      .replace("$ATTRIBUTE$", definition)
                       .replace("$STORY$", text))
-            label = int(answer == i)
-            rows.append([obj["key"], obj["character"], obj["book_name"], trait, label, TEMPLATE])
+            rows.append(row)
             prompts.append(prompt)
     accelerator.print()
 
@@ -95,14 +96,15 @@ def zeroshot_personality(_):
     model_name_or_path = FLAGS.model_name_or_path
     if os.path.exists(os.path.join(datadirs.datadir, model_name_or_path)):
         model_name_or_path = os.path.join(datadirs.datadir, model_name_or_path)
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16,
+    model = AutoModelForCausalLM.from_pretrained(model_name_or_path,
+                                                 torch_dtype=torch.float16,
                                                  device_map={"": accelerator.device})
     accelerator.print("\nmodel generation config:")
     accelerator.print(str(model.generation_config).strip())
 
     # instantiate tokenizer
     accelerator.print("instantiating tokenizer\n")
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side="left")
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side="left", truncation_side="right")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -115,7 +117,12 @@ def zeroshot_personality(_):
             n_batches = math.ceil(len(process_prompts)/FLAGS.batch_size)
             for i in tqdm(list(range(n_batches)), desc="prompting", unit="batch"):
                 batch_prompts = process_prompts[i * FLAGS.batch_size: (i + 1) * FLAGS.batch_size]
-                batch_encoding = tokenizer(batch_prompts, padding="longest", return_tensors="pt").to(accelerator.device)
+                batch_encoding = (tokenizer(batch_prompts,
+                                            padding="max_length",
+                                            truncation=True,
+                                            max_length=8192,
+                                            return_tensors="pt")
+                                  .to(accelerator.device))
                 batch_output = model.generate(**batch_encoding,
                                               do_sample=True,
                                               top_k=2,
@@ -128,7 +135,7 @@ def zeroshot_personality(_):
                                               return_legacy_cache=True)
                 batch_output_ids = batch_output["sequences"][:, -1].reshape(-1, 1)
                 batch_responses = tokenizer.batch_decode(batch_output_ids, skip_special_tokens=True)
-                batch_responses = list(map(lambda text: re.findall(r"\w+", text)[0].lower(), batch_responses))
+                batch_responses = list(map(process_response, batch_responses))
                 batch_probs = batch_output["scores"][0].softmax(dim=1)
                 batch_probs = batch_probs.gather(dim=1, index=batch_output_ids).flatten().tolist()
                 output["responses"].extend(batch_responses)
@@ -140,17 +147,16 @@ def zeroshot_personality(_):
             responses = [response for output in gathered_outputs for response in output["responses"]]
             probs = [prob for output in gathered_outputs for prob in output["probs"]]
             responses, probs = responses[:len(prompts)], probs[:len(prompts)]
+
             # save output
             os.makedirs(output_dir, exist_ok=True)
-            output_df = pd.DataFrame(rows, columns=["key", "character", "book", "trait", "label", "template"])
+            output_df = pd.DataFrame(rows, columns=["key", "character", "personality", "percentage"])
+            output_df.fillna(0, inplace=True)
             output_df["response"] = responses
             output_df["prob"] = probs
             output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
             output_file = os.path.join(output_dir, output_filename)
             output_df.to_csv(output_file, index=False)
-            for k in range(1, 4):
-                accuracy = evaluate(output_df, k)
-                print(f"accuracy@{k} = {accuracy:.3f}")
 
 if __name__ == '__main__':
     app.run(zeroshot_personality)

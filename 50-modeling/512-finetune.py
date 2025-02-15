@@ -32,6 +32,8 @@ flags.DEFINE_bool("bf16", default=False, help="use brain floating point (default
 flags.DEFINE_bool("load_4bit", default=False, help="do 4-bit QLoRA training")
 flags.DEFINE_bool("load_8bit", default=False, help="do 8-bit QLoRA training")
 flags.DEFINE_bool("flash_attn", default=False, help="use flash attention (default=scaled dot product 'sdpa')")
+flags.DEFINE_enum("attn", default="sdpa", enum_values=["flash_attention_2", "sdpa", "eager"],
+                  help="attention implementation")
 flags.DEFINE_integer("dataset_batch_size", default=4096, help="dataset batch size for tokenization")
 flags.DEFINE_integer("train_batch_size", default=1, help="training batch size")
 flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
@@ -371,8 +373,7 @@ def finetune(_):
                                                  torch_dtype=compute_dtype,
                                                  quantization_config=quantization_config,
                                                  device_map={"": partial_state.process_index},
-                                                 attn_implementation=("flash_attention_2" if FLAGS.flash_attn else 
-                                                                      "sdpa"))
+                                                 attn_implementation=FLAGS.attn)
 
     # instantiating tokenizer
     if partial_state.is_local_main_process:
