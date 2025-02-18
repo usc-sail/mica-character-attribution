@@ -1,16 +1,17 @@
 """Zero-shot prompt the movie script to find whether character portrays the trope
 
 Example Usage:
-python 502-zeroshot-script.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_input_tokens 64 
-       --max_output_tokens 256 --temperature 1
+python 502-zeroshot-script.py --hf_model meta-llama/Llama-3.1-8B-Instruct --batch_size 1 --max_input_tokens 64 
+       --max_output_tokens 256
 python 502-zeroshot-script.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> 
-       --max_output_tokens 256 --temperature 1
+       --max_output_tokens 256
 """
 import datadirs
 import generation
 
 from absl import app
 from absl import flags
+from accelerate import PartialState
 import numpy as np
 import os
 import pandas as pd
@@ -24,6 +25,8 @@ FLAGS = flags.FLAGS
 
 def prompt(_):
     """Zero-shot prompt the scripts to find character attribution"""
+    partial_state = PartialState()
+
     # get file paths
     movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
     label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
@@ -33,7 +36,7 @@ def prompt(_):
     output_dir = os.path.join(datadirs.datadir, f"50-modeling/zeroshot-script/{modelname}")
 
     # get the character name and the scripts where they appear
-    print("read data")
+    partial_state.print("read data")
     label_df = pd.read_csv(label_file, index_col=None)
     map_df = pd.read_csv(map_file, index_col=None, dtype=str)
     tropes_df = pd.read_csv(tropes_file, index_col=None)
@@ -41,7 +44,9 @@ def prompt(_):
     characterid_to_name = {}
     characterid_to_imdbids = {}
     trope_to_definition = {}
-    for imdbid in tqdm.tqdm(map_df["imdb-id"].unique(), desc="read movie scripts"):
+    for imdbid in tqdm.tqdm(map_df["imdb-id"].unique(),
+                            desc="read movie scripts",
+                            disable=not partial_state.is_main_process):
         script_file = os.path.join(movie_scripts_dir, imdbid, "script.txt")
         imdbid_to_script[imdbid] = open(script_file).read().strip()
     for _, row in tropes_df.iterrows():
@@ -85,15 +90,19 @@ def prompt(_):
     Answer yes or no. If yes, give a brief explanation. Do not use MarkDown."""
     system_instr = re.sub(r"\n[ ]*", "\n", system_instr)
     template = re.sub(r"\n[ ]*", "\n", template)
-    print("system-instruction:======================================================================================")
-    print(system_instr)
-    print("=========================================================================================================\n")
-    print("template:================================================================================================")
-    print(template)
-    print("=========================================================================================================\n")
+    partial_state.print(
+        "system-instruction:========================================================================================")
+    partial_state.print(system_instr)
+    partial_state.print(
+        "=========================================================================================================\n")
+    partial_state.print(
+        "template:================================================================================================")
+    partial_state.print(template)
+    partial_state.print(
+        "=========================================================================================================\n")
 
     # create prompts
-    print("creating prompts")
+    partial_state.print("creating prompts")
     rows, prompts = [], []
     test_df = label_df[label_df["partition"] == "test"]
     os.makedirs(output_dir, exist_ok=True)
@@ -109,27 +118,31 @@ def prompt(_):
             prompts.append(prompt)
 
     # instantiate generator
-    print("instantiating generator")
+    partial_state.print("instantiating generator")
     if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
+    elif FLAGS.gpt_model is not None:
+        generator = generation.GPT()
     else:
-        generator = generation.Llama()
+        generator = generation.HF()
 
     # prompt
     for i in range(FLAGS.runs):
-        print(f"run {i + 1}/{FLAGS.runs}")
+        partial_state.print(f"run {i + 1}/{FLAGS.runs}")
         if FLAGS.gemini_model is not None:
-            responses = list(generator(prompts))
+            responses = generator(prompts)
         else:
-            responses = list(generator(prompts, system_instr))
+            responses = generator(prompts, system_instr)
+        responses = [response.strip() for response in responses]
 
         # save output
-        os.makedirs(output_dir, exist_ok=True)
-        output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "imdbid"])
-        output_df["response"] = responses
-        output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
-        output_file = os.path.join(output_dir, output_filename)
-        output_df.to_csv(output_file, index=False)
+        if partial_state.is_main_process:
+            os.makedirs(output_dir, exist_ok=True)
+            output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "imdbid"])
+            output_df["response"] = responses
+            output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
+            output_file = os.path.join(output_dir, output_filename)
+            output_df.to_csv(output_file, index=False)
 
 if __name__ == '__main__':
     app.run(prompt)

@@ -9,6 +9,7 @@ import generation
 
 from absl import app
 from absl import flags
+from accelerate import PartialState
 import os
 import pandas as pd
 import random
@@ -21,6 +22,8 @@ FLAGS = flags.FLAGS
 
 def prompt(_):
     """Zero-shot prompt the character segments to find character attribution"""
+    partial_state = PartialState()
+
     # get file paths
     segments_dir = os.path.join(datadirs.datadir, "50-modeling/segments")
     label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
@@ -30,7 +33,7 @@ def prompt(_):
     output_dir = os.path.join(datadirs.datadir, f"50-modeling/zeroshot-segments/{modelname}")
 
     # read data
-    print("read data")
+    partial_state.print("read data")
     label_df = pd.read_csv(label_file, index_col=None)
     map_df = pd.read_csv(map_file, index_col=None, dtype=str)
     tropes_df = pd.read_csv(tropes_file, index_col=None)
@@ -40,8 +43,11 @@ def prompt(_):
     trope_to_definition = {}
     for _, row in tropes_df.iterrows():
         trope_to_definition[row.trope] = row.summary
-    for characterid, character_df in tqdm.tqdm(map_df.groupby("character"), total=len(map_df["character"].unique()),
-                                               unit="character", desc="reading segments"):
+    for characterid, character_df in tqdm.tqdm(map_df.groupby("character"),
+                                               total=len(map_df["character"].unique()),
+                                               unit="character",
+                                               desc="reading segments",
+                                               disable=not partial_state.is_main_process):
         characterid_to_imdbids[characterid] = character_df["imdb-id"].tolist()
         for imdbid, name in character_df[["imdb-id", "name"]].itertuples(index=False, name=None):
             characterid_and_imdbid_to_name[(characterid, imdbid)] = name
@@ -77,15 +83,15 @@ def prompt(_):
     Answer yes or no. If yes, give a brief explanation. Do not use MarkDown."""
     system_instr = re.sub(r"\n[ ]*", "\n", system_instr)
     template = re.sub(r"\n[ ]*", "\n", template)
-    print("system-instruction:======================================================================================")
-    print(system_instr)
-    print("=========================================================================================================\n")
-    print("template:================================================================================================")
-    print(template)
-    print("=========================================================================================================\n")
+    partial_state.print("system-instruction:======================================================================================")
+    partial_state.print(system_instr)
+    partial_state.print("=========================================================================================================\n")
+    partial_state.print("template:================================================================================================")
+    partial_state.print(template)
+    partial_state.print("=========================================================================================================\n")
 
     # create prompts
-    print("creating prompts")
+    partial_state.print("creating prompts")
     rows, prompts = [], []
     test_df = label_df[label_df["partition"] == "test"]
     os.makedirs(output_dir, exist_ok=True)
@@ -105,30 +111,34 @@ def prompt(_):
                 prompts.append(prompt)
         if n_segments == 0:
             missed_samples += 1
-    print(f"{missed_samples} samples missed because character does not have mentions")
+    partial_state.print(f"{missed_samples} samples missed because character does not have mentions")
 
     # instantiate generator
-    print("instantiating generator")
+    partial_state.print("instantiating generator")
     if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
+    elif FLAGS.gpt_model is not None:
+        generator = generation.GPT()
     else:
-        generator = generation.Llama()
+        generator = generation.HF()
 
     # prompt
     for i in range(FLAGS.runs):
-        print(f"run {i + 1}/{FLAGS.runs}")
+        partial_state.print(f"run {i + 1}/{FLAGS.runs}")
         if FLAGS.gemini_model is not None:
-            responses = list(generator(prompts))
+            responses = generator(prompts)
         else:
-            responses = list(generator(prompts, system_instr))
+            responses = generator(prompts, system_instr)
+        responses = [response.strip() for response in responses]
 
-        # save output
-        os.makedirs(output_dir, exist_ok=True)
-        output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "imdbid"])
-        output_df["response"] = responses
-        output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
-        output_file = os.path.join(output_dir, output_filename)
-        output_df.to_csv(output_file, index=False)
+        if partial_state.is_main_process:
+            # save output
+            os.makedirs(output_dir, exist_ok=True)
+            output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "imdbid"])
+            output_df["response"] = responses
+            output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
+            output_file = os.path.join(output_dir, output_filename)
+            output_df.to_csv(output_file, index=False)
 
 if __name__ == '__main__':
     app.run(prompt)

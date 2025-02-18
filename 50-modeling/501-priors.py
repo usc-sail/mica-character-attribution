@@ -1,58 +1,33 @@
 """Prompt to find the prior knowledge of the model
 
 Example Usage:
-python 501-priors.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_output_tokens 256 --temperature 1
-python 501-priors.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 256 --temperature 1
+python 501-priors.py --hf_model meta-llama/Llama-3.1-8B-Instruct --max_output_tokens 256
+python 501-priors.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 256
+python 501-priors.py --gpt_model gpt-4o-mini --gpt_key <PATH_TO_GPT_KEY_FILE> --max_output_tokens 256
 """
 import datadirs
 import generation
 
 from absl import app
 from absl import flags
+from accelerate import PartialState
 import numpy as np
 import os
 import pandas as pd
+import random
 import re
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+import string
 
 flags.DEFINE_integer("runs", default=1, help="number of runs")
-flags.DEFINE_string("evaluation_dir", default=None, help=("directory containing response csv files that we evaluate, "
-                                                          "give path relative to 50-modeling/priors"))
 FLAGS = flags.FLAGS
-
-def evaluate_response():
-    """Evaluate the prior knowledge of the models"""
-    output_dir = os.path.join(datadirs.datadir, "50-modeling/priors", FLAGS.evaluation_dir)
-    acc_arr, prec_arr, rec_arr, f1_arr = [], [], [], []
-    for file in os.listdir(output_dir):
-        if file.endswith(".csv"):
-            output_file = os.path.join(output_dir, file)
-            output_df = pd.read_csv(output_file, index_col=None)
-            output_df["answer"] = output_df["response"].str.extract(r"(\w+)")[0].str.lower()
-            true = output_df["label"].astype(int)
-            pred = output_df["answer"].apply(lambda ans: 1 if ans == "yes" else 0 if ans == "no" else np.nan).values
-            n = np.isnan(pred).sum()
-            true = true[~np.isnan(pred)]
-            pred = pred[~np.isnan(pred)]
-            acc = accuracy_score(true, pred)
-            prec, rec, f1, _ = precision_recall_fscore_support(true, pred, average="binary")
-            print(f"{file}")
-            print(f"could not parse {n} samples")
-            print(f"n={len(true)} samples evaluated")
-            print(f"acc={acc:.3f} precision={prec:.3f} recall={rec:.3f} F1={f1:.3f}\n")
-            acc_arr.append(acc)
-            prec_arr.append(prec)
-            rec_arr.append(rec)
-            f1_arr.append(f1)
-    print(f"acc: mean={np.mean(acc_arr):.3f} std={np.std(acc_arr):.4f}")
-    print(f"precision: mean={np.mean(prec_arr):.3f} std={np.std(prec_arr):.4f}")
-    print(f"recall: mean={np.mean(rec_arr):.3f} std={np.std(rec_arr):.4f}")
-    print(f"f1: mean={np.mean(f1_arr):.3f} std={np.std(f1_arr):.4f}")
 
 def prompt_priors():
     """Prompt models to find prior knowledge"""
+    partial_state = PartialState()
+
     # read data
-    print("read data")
+    partial_state.print("read data")
     data_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/chatter.csv"), index_col=None)
     map_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv"), index_col=None, dtype=str)
     metadata_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/movie-metadata.csv"), index_col=None, dtype=str)
@@ -61,7 +36,7 @@ def prompt_priors():
     output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{modelname}")
 
     # process data
-    print("process data")
+    partial_state.print("process data")
     imdbid_to_title = {}
     characterid_to_name = {}
     characterid_to_titles = {}
@@ -91,22 +66,24 @@ def prompt_priors():
     The explanation should follow after the yes/no answer."""
     system_instr = re.sub(r"\n[ ]*", "\n", system_instr)
     template = re.sub(r"\n[ ]*", "\n", template)
-    print("system-instruction:======================================================================================")
-    print(system_instr)
-    print("=========================================================================================================\n")
-    print("template:================================================================================================")
-    print(template)
-    print("=========================================================================================================\n")
+    partial_state.print("system-instruction:======================================================================================")
+    partial_state.print(system_instr)
+    partial_state.print("=========================================================================================================\n")
+    partial_state.print("template:================================================================================================")
+    partial_state.print(template)
+    partial_state.print("=========================================================================================================\n")
 
     # instantiate generator
-    print("instantiating generator")
+    partial_state.print("instantiating generator")
     if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
+    elif FLAGS.gpt_model is not None:
+        generator = generation.GPT()
     else:
-        generator = generation.Llama()
+        generator = generation.HF()
 
     # create prompts
-    print("create prompts")
+    partial_state.print("create prompts")
     test_df = data_df[data_df["partition"] == "test"]
     rows, prompts = [], []
     for _, row in test_df.iterrows():
@@ -119,22 +96,21 @@ def prompt_priors():
         rows.append([characterid, trope, label, system_instr, prompt])
 
     # prompt
-    for i in range(1, FLAGS.runs + 1):
+    for i in range(FLAGS.runs):
+        partial_state.print(f"run {i + 1}/{FLAGS.runs}")
         if FLAGS.gemini_model is not None:
-            responses = list(generator(prompts))
+            responses = generator(prompts)
         else:
-            responses = list(generator(prompts, system_instr))
-        os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, f"run{i}.csv")
-        output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "system-instr", "prompt"])
-        output_df["response"] = responses
-        output_df.to_csv(output_file, index=False)
+            responses = generator(prompts, system_instr)
+        responses = [response.strip() for response in responses]
 
-def main(_):
-    if FLAGS.evaluation_dir:
-        evaluate_response()
-    else:
-        prompt_priors()
+        if partial_state.is_main_process:
+            os.makedirs(output_dir, exist_ok=True)
+            output_df = pd.DataFrame(rows, columns=["character", "trope", "label", "system-instr", "prompt"])
+            output_df["response"] = responses
+            output_filename = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(5)) + ".csv"
+            output_file = os.path.join(output_dir, output_filename)
+            output_df.to_csv(output_file, index=False)
 
 if __name__ == '__main__':
-    app.run(main)
+    app.run(prompt_priors)
