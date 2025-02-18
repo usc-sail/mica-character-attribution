@@ -68,7 +68,7 @@ def evaluate_runs(evaluation_dir, verbose=True):
         print(f"precision={prec_mean:.3f} (std={prec_std:.4f})")
         print(f"recall={rec_mean:.3f} (std={rec_std:.4f})")
         print(f"F1={f1_mean:.3f} (std={f1_std:.4f})")
-    return acc_mean, acc_std, prec_mean, prec_std, rec_mean, rec_std, f1_mean, f1_std
+    return acc_mean, acc_std, prec_mean, prec_std, rec_mean, rec_std, f1_mean, f1_std, len(acc_arr)
 
 def test_statistic(x, y, true, metric):
     if metric == "accuracy":
@@ -122,7 +122,7 @@ def permutation_test(evaluation_dir1, evaluation_dir2, n_tests=1, metric="accura
         pred2 = df["pred_y"].values
         test_result = stats.permutation_test((pred1, pred2), statistic=lambda x, y: test_statistic(x, y, true, metric),
                                              permutation_type="samples", n_resamples=1000, alternative="two-sided")
-        print(f"test{i + 1}: {filenames1[i]} <-> {filenames2[j]}, {len(df)} samples")
+        print(f"test{i + 1}: {filenames1[j]} <-> {filenames2[k]}, {len(df)} samples")
         print(f"test-statistic = X - Y = {test_result.statistic:.6f}, p = {test_result.pvalue:.6f}\n")
         pvalues.append(test_result.pvalue)
     return pvalues
