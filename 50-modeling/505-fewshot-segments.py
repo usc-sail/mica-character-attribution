@@ -125,7 +125,9 @@ def prompt(_):
                 n_segments += 1
                 name = characterid_and_imdbid_to_name[(characterid, imdbid)]
                 segment = characterid_and_imdbid_to_segment[(characterid, imdbid)]
-                example = (example_template.replace("$CHARACTER$", name).replace("$DEFINITION$", definition)
+                example = (example_template
+                           .replace("$CHARACTER$", name)
+                           .replace("$DEFINITION$", definition)
                            .replace("$SEGMENTS$", segment))
                 rows.append([characterid, trope, label, imdbid, example])
         if n_segments == 0:
@@ -159,6 +161,8 @@ def prompt(_):
             negative_examples = character_negative_examples_df.sample(n_negative_examples)["example"].tolist()
         if FLAGS.example_selection_strategy == "trope" and (len(trope_negative_examples_df) >= n_negative_examples):
             negative_examples = trope_negative_examples_df.sample(n_negative_examples)["example"].tolist()
+        positive_examples = [example.replace("$LABEL$", "yes") for example in positive_examples]
+        negative_examples = [example.replace("$LABEL$", "no") for example in negative_examples]
         examples = positive_examples + negative_examples
         random.shuffle(examples)
         examples = [example.replace("$HEADER$", f"Example {i + 1}") for i, example in enumerate(examples)]
@@ -172,6 +176,8 @@ def prompt(_):
     partial_state.print("instantiating generator")
     if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
+    elif FLAGS.gpt_model is not None:
+        generator = generation.GPT()
     else:
         generator = generation.HF()
 
@@ -182,6 +188,7 @@ def prompt(_):
             responses = generator(prompts)
         else:
             responses = generator(prompts, system_instr)
+        responses = [response.strip() for response in responses]
 
         if partial_state.is_main_process:
             # save output
