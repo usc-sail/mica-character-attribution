@@ -1,4 +1,7 @@
-"""Utility functions to load data for the CHATTER, PERSONET and STORY2PERSONALITY datasets"""
+"""Utility functions to load data for the CHATTER, PERSONET and STORY2PERSONALITY datasets in a standard format
+
+Each data sample contains the following keys: key, docid, character, attribute, text, label, partition
+"""
 import datadirs
 
 import collections
@@ -18,7 +21,8 @@ def load_extracts(extracts_file):
         processed_data.append({"key": f"{obj['character']}-{obj['trope']}",
                                "docid": obj["imdbid"],
                                "character": obj["name"],
-                               "attribute": obj["definition"],
+                               "attribute-name": obj["trope"],
+                               "attribute-definition": obj["definition"],
                                "text": obj["text"],
                                "label": obj["label"],
                                "partition": obj["partition"]})
@@ -34,7 +38,8 @@ def load_contexts(contexts_file):
             processed_data.append({"key": f"{obj['character']}-{obj['trope']}",
                                    "docid": obj["imdbid"],
                                    "character": obj["name"],
-                                   "attribute": obj["definition"],
+                                   "attribute-name": obj["trope"],
+                                   "attribute-definition": obj["definition"],
                                    "text": obj["text"],
                                    "label": obj["label"],
                                    "partition": obj["partition"]})
@@ -59,7 +64,8 @@ def load_contexts(contexts_file):
                 processed_data.append({"key": f"{characterid}-{trope}",
                                        "docid": obj["imdbid"],
                                        "character": obj["name"],
-                                       "attribute": definition,
+                                       "attribute-name": obj["trope"],
+                                       "attribute-definition": definition,
                                        "text": obj["text"],
                                        "label": label,
                                        "partition": partition})
@@ -94,7 +100,8 @@ def load_personet(test=False):
             processed_data.append({"key": key,
                                    "docid": obj["book_name"],
                                    "character": obj["character"],
-                                   "attribute": trait,
+                                   "attribute-name": trait,
+                                   "attribute-definition": trait,
                                    "text": text,
                                    "label": int(answer == i),
                                    "partition": obj["partition"]})
@@ -106,6 +113,14 @@ def load_story2personality():
     definition_filepath = os.path.join(datadirs.datadir, "STORY2PERSONALITY/personality-definitions.txt")
     story2personality = pickle.load(open(filepath, mode="rb"))
     personality2definition = {}
+    personality2name = {"E": "Extraversion",
+                        "I": "Introversion",
+                        "S": "Sensing",
+                        "N": "Intuition",
+                        "T": "Thinking",
+                        "F": "Feeling",
+                        "J": "Judging",
+                        "P": "Perceiving"}
     with open(definition_filepath) as fr:
         lines = fr.read().strip().split("\n")
     for i in range(0, len(lines), 2):
@@ -127,14 +142,16 @@ def load_story2personality():
                 processed_data.append({"key": f"{obj['id']}-{px}/{py}",
                                        "docid": obj["subcategory"],
                                        "character": obj["mbti_profile"],
-                                       "attribute": dx,
+                                       "attribute-name": personality2name[px], 
+                                       "attribute-definition": dx,
                                        "text": text,
                                        "label": lx,
                                        "partition": "test"})
                 processed_data.append({"key": f"{obj['id']}-{px}/{py}",
                                        "docid": obj["subcategory"],
                                        "character": obj["mbti_profile"],
-                                       "attribute": dy,
+                                       "attribute-name": personality2name[py],
+                                       "attribute-definition": dy,
                                        "text": text,
                                        "label": ly,
                                        "partition": "test"})
