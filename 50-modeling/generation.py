@@ -3,7 +3,8 @@ import datadirs
 
 from absl import flags
 from accelerate import PartialState
-from accelerate.utils import gather_object
+from accelerate.utils import gather_object, InitProcessGroupKwargs
+from datetime import timedelta
 from google.api_core import retry
 from google import generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -191,7 +192,8 @@ class Gemini:
 class HF:
     """Huggingface model generator"""
     def __init__(self):
-        self.partial_state = PartialState()
+        kwargs = InitProcessGroupKwargs(timeout=timedelta(hours=12)).to_kwargs()
+        self.partial_state = PartialState(**kwargs)
         self.partial_state.print("instantiating model")
         compute_dtype = torch.bfloat16 if FLAGS.bf16 else torch.float16
         if FLAGS.load_4bit:
@@ -234,11 +236,7 @@ class HF:
         with self.partial_state.split_between_processes(prompts, apply_padding=True) as process_prompts:
             n_batches = math.ceil(len(process_prompts)/FLAGS.batch_size)
             process_responses = []
-            for i in tqdm.tqdm(list(range(n_batches)),
-                               desc="prompting",
-                               unit="batch",
-                               disable=not self.partial_state.is_main_process,
-                               miniters=1):
+            for i in range(n_batches):
                 batch_prompts = process_prompts[i * FLAGS.batch_size: (i + 1) * FLAGS.batch_size]
                 batch_encoding = (self
                                   .tokenizer(batch_prompts,
@@ -259,6 +257,7 @@ class HF:
                 batch_output = batch_output[:, batch_encoding["input_ids"].shape[1]:]
                 batch_responses = self.tokenizer.batch_decode(batch_output, skip_special_tokens=True)
                 process_responses.extend(batch_responses)
+                print(f"PROCESS {self.partial_state.process_index}: Batch {i + 1} / {n_batches} done")
             responses = [process_responses]
         responses_arr = gather_object(responses)
         responses = [response for responses in responses_arr for response in responses]
