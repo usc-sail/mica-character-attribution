@@ -1,18 +1,15 @@
 """Prompt to extract the relevant sections from the story
 
 Example Usage:
-python 509-extracts.py --llama_model Llama-3.1-8B-Instruct --batch_size 1 --max_input_tokens 64 --max_output_tokens 3584
-python 509-extracts.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 3584
-python 509-extracts.py --device cuda:1
-python 509-extracts.py --sample 10
-python 509-extracts.py --slice 1 --nslices 16
+accelerate launch 509-extracts.py --hf_model meta-llama/Llama-3.1-8B-Instruct --max_input_tokens 64 
+    --max_output_tokens 1536 --do_sample --top_p 0.9 --attn flash_attention_2
 """
 import datadirs
 import generation
 
 from absl import app
 from absl import flags
-from absl import logging
+from accelerate import PartialState
 import jsonlines
 import numpy as np
 import os
@@ -22,65 +19,38 @@ import tqdm
 
 flags.DEFINE_enum("partition", default="test", enum_values=["train", "dev", "test"],
                   help="specify partition from which to extract sections")
-flags.DEFINE_integer("sample", default=None, help="sample data to prompt (only use for testing)")
 flags.DEFINE_integer("slice", default=None, help="data slice to prompt (default=complete data)")
 flags.DEFINE_integer("nslices", default=16, help="number of slices")
-flags.DEFINE_bool("stream", default=False, help="stream output")
-
-def flags_checker(args):
-    issample = args["sample"] is not None
-    isslice = args["slice"] is not None
-    return not (issample and isslice)
-
-flags.register_multi_flags_validator(["sample", "slice"], flags_checker,
-                                     message="cannot provide both sample and slice together")
-
 FLAGS = flags.FLAGS
 
 def extract_sections(_):
     """Extract relevant sections from the story"""
+    partial_state = PartialState()
+
     # get the files
     label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
     map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
     movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
-    modelname = f"{generation.modelname()}-out{FLAGS.max_output_tokens}"
-    if FLAGS.llama_model is not None:
-        modelname = f"{modelname}-inp{FLAGS.max_input_tokens}K"
-    filename = f"{modelname}-{FLAGS.partition}"
-    output_file = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}.jsonl")
+    filename = f"{generation.modelname()}-{FLAGS.max_output_tokens}-{FLAGS.partition}"
     if FLAGS.slice is not None:
-        output_dir = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}")
-        os.makedirs(output_dir, exist_ok=True)
-        progress_file = os.path.join(output_dir, "progress.txt")
-        host_progress_file = os.path.join(output_dir, f"{datadirs.host}-{FLAGS.slice}-of-{FLAGS.nslices}.txt")
-        output_file = os.path.join(output_dir, f"{datadirs.host}-{FLAGS.slice}-of-{FLAGS.nslices}.jsonl")
-        logging.get_absl_handler().use_absl_log_file(program_name="extract", log_dir=output_dir)
-        logging.get_absl_handler().setFormatter(None)
-        completed = set()
-        if os.path.exists(progress_file):
-            with open(progress_file) as fr:
-                lines = fr.readlines()
-            for line in lines:
-                line = line.strip()
-                try:
-                    _, characterid, trope, imdbid = line.split()
-                    completed.append((characterid, trope, imdbid))
-                except Exception:
-                    pass
+        filename += f"-{FLAGS.slice}-of-{FLAGS.nslices}"
+    output_file = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}.jsonl")
 
     # read data
-    logging.info("reading data")
+    partial_state.print("reading data")
     imdbid_to_script = {}
     label_df = pd.read_csv(label_file, index_col=None)
     map_df = pd.read_csv(map_file, index_col=None, dtype=str)
     tropes_df = pd.read_csv(tropes_file, index_col=None)
-    for imdbid in tqdm.tqdm(map_df["imdb-id"].unique(), desc="reading movie scripts"):
+    for imdbid in tqdm.tqdm(map_df["imdb-id"].unique(),
+                            desc="reading movie scripts",
+                            disable=not partial_state.is_main_process):
         script_file = os.path.join(movie_scripts_dir, imdbid, "script.txt")
         imdbid_to_script[imdbid] = open(script_file).read().strip()
 
     # process data
-    logging.info("processing data")
+    partial_state.print("processing data")
     characterid_to_name = {}
     characterid_to_imdbids = {}
     trope_to_definition = {}
@@ -96,7 +66,7 @@ def extract_sections(_):
         characterid_to_imdbids[characterid] = sorted(character_df["imdb-id"].tolist())
     for _, row in tropes_df.iterrows():
         trope_to_definition[row.trope] = row.summary
-    logging.info("")
+    partial_state.print("")
 
     # system instruction and prompt template
     system_instr = """You are an information extraction model for movie scripts.
@@ -134,28 +104,27 @@ def extract_sections(_):
 
     system_instr = re.sub(r"\n[ ]*", "\n", system_instr)
     template = re.sub(r"\n[ ]*", "\n", template)
-    logging.info("system-instruction:======================================================================================")
-    logging.info(system_instr)
-    logging.info("=========================================================================================================\n")
-    logging.info("template:================================================================================================")
-    logging.info(template)
-    logging.info("=========================================================================================================\n")
+    partial_state.print("system-instruction:==========================================================================")
+    partial_state.print(system_instr)
+    partial_state.print("===========================================================================================\n")
+    partial_state.print("template:====================================================================================")
+    partial_state.print(template)
+    partial_state.print("===========================================================================================\n")
 
     # create prompts
     label_df = label_df[label_df["partition"] == FLAGS.partition]
-    if FLAGS.sample is not None:
-        label_df = label_df.sample(FLAGS.sample)
     extract_data, prompts = [], []
     label_df = label_df.sort_values(["character", "trope"])
-    for _, row in tqdm.tqdm(label_df.iterrows(), total=len(label_df), desc="creating prompts"):            
+    for _, row in tqdm.tqdm(label_df.iterrows(),
+                            total=len(label_df),
+                            desc="creating prompts",
+                            disable=not partial_state.is_main_process):
         characterid, trope, partition = row.character, row.trope, row.partition
         label = row.label if partition == "test" else row["tvtrope-label"]
         label = int(label)
         name = characterid_to_name[characterid]
         definition = trope_to_definition[trope]
         for imdbid in characterid_to_imdbids[characterid]:
-            if FLAGS.slice is not None and (characterid, trope, imdbid) in completed:
-                continue
             script = imdbid_to_script[imdbid]
             prompt = (template.replace("$TROPE$", trope).replace("$CHARACTER$", name)
                       .replace("$DEFINITION$", definition).replace("$SCRIPT$", script))
@@ -175,32 +144,25 @@ def extract_sections(_):
         prompts = prompts[FLAGS.slice * slice_size: (FLAGS.slice + 1) * slice_size]
     if len(extract_data) == 0:
         return
-    logging.info("")
+    partial_state.print("")
 
-    # instantiate generator and prompt
-    if FLAGS.llama_model is not None:
-        generator = generation.Llama()
-        response_generator = generator(prompts, system_instr)
-    else:
+    # instantiate generator
+    if FLAGS.gemini_model is not None:
         generator = generation.Gemini(system_instr)
-        response_generator = generator(prompts)
-
-    if FLAGS.stream:
-        if FLAGS.slice is not None:
-            with jsonlines.open(output_file, "a", flush=True) as writer, open(host_progress_file, "a") as fw:
-                for item, response in zip(extract_data, response_generator):
-                    item["text"] = response
-                    writer.write(item)
-                    characterid, trope, imdbid = item["character"], item["trope"], item["imdbid"]
-                    fw.write(f"{datadirs.host} {characterid} {trope} {imdbid}\n")
-                    fw.flush()
-        else:
-            with jsonlines.open(output_file, "a", flush=True) as writer:
-                for item, response in zip(extract_data, response_generator):
-                    item["text"] = response
-                    writer.write(item)
+    elif FLAGS.gpt_model is not None:
+        generator = generation.GPT()
     else:
-        responses = list(response_generator)
+        generator = generation.HF()
+
+    # prompt
+    if FLAGS.gemini_model is not None:
+        responses = generator(prompts)
+    else:
+        responses = generator(prompts, system_instr)
+    responses = [response.strip() for response in responses]
+
+    # save data
+    if partial_state.is_main_process:
         for item, response in zip(extract_data, responses):
             item["text"] = response
         with jsonlines.open(output_file, "w") as writer:
