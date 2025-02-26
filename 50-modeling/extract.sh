@@ -1,6 +1,6 @@
 #!/bin/bash
 
-NPROCESSES=$1
-for (( PROCESS=0; PROCESS<$NPROCESSES; PROCESS+=2 )); do
-    sbatch extract-batch.sh $PROCESS $NPROCESSES
+NSLICES=$1
+for (( SLICE=0; SLICE<$NSLICES; SLICE+=1 )); do
+    sbatch extract-batch.sh $SLICE $NSLICES
 done
