@@ -16,13 +16,12 @@ import os
 import pandas as pd
 import random
 import re
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import string
 
 flags.DEFINE_integer("runs", default=1, help="number of runs")
 FLAGS = flags.FLAGS
 
-def prompt_priors():
+def prompt_priors(_):
     """Prompt models to find prior knowledge"""
     partial_state = PartialState()
 
