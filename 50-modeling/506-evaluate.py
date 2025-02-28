@@ -1,5 +1,5 @@
 """Evaluation functions"""
-import datadirs
+import data_utils
 
 from absl import app
 from absl import flags
@@ -137,7 +137,7 @@ def permutation_test_runs(evaluation_dirs, n_tests=1, metric="accuracy"):
         print()
 
 def main(_):
-    evaluation_dirs = [os.path.join(datadirs.datadir, dr) for dr in FLAGS.evaluation_dir]
+    evaluation_dirs = [os.path.join(data_utils.DATADIR, dr) for dr in FLAGS.evaluation_dir]
     if FLAGS.task == "evaluate":
         evaluation_dir = evaluation_dirs[0]
         evaluate_runs(evaluation_dir)

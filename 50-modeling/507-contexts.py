@@ -1,5 +1,5 @@
 """Extract trope-relevant paragraphs from character segments"""
-import datadirs
+import data_utils
 
 from absl import app
 from absl import flags
@@ -47,10 +47,10 @@ def write_statistics(arr, name, fw):
 def extract_contexts(_):
     """Extracts contexts from character segments"""
     # get filepaths
-    label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
-    map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
-    tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
-    segments_dir = os.path.join(datadirs.datadir, "50-modeling/segments")
+    label_file = os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv")
+    map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
+    tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
+    segments_dir = os.path.join(data_utils.DATADIR, "50-modeling/segments")
     random.seed(FLAGS.seed)
 
     # read data
@@ -104,12 +104,12 @@ def extract_contexts(_):
         lb = abs(FLAGS.max_neg_similarity)
         strategy = f"{modelname}-{lb}NEG-{FLAGS.min_pos_similarity}POS"
         histfilename = f"{FLAGS.min_words_per_paragraph}P-{FLAGS.max_words_per_context}C-{modelname}"
-        histfile = os.path.join(datadirs.datadir, f"50-modeling/contexts/{histfilename}-similarities.png")
+        histfile = os.path.join(data_utils.DATADIR, f"50-modeling/contexts/{histfilename}-similarities.png")
     else:
         strategy = FLAGS.strategy
     filename = f"{FLAGS.min_words_per_paragraph}P-{FLAGS.max_words_per_context}C-{strategy}"
-    contexts_file = os.path.join(datadirs.datadir, f"50-modeling/contexts/{filename}.jsonl")
-    stats_file = os.path.join(datadirs.datadir, f"50-modeling/contexts/{filename}-stats.txt")
+    contexts_file = os.path.join(data_utils.DATADIR, f"50-modeling/contexts/{filename}.jsonl")
+    stats_file = os.path.join(data_utils.DATADIR, f"50-modeling/contexts/{filename}-stats.txt")
     label_df = label_df[label_df["partition"].notna()]
     n_words_per_context = []
     n_paras_per_context = []

@@ -4,7 +4,7 @@ Example Usage:
 accelerate launch 509-extracts.py --hf_model meta-llama/Llama-3.1-8B-Instruct --max_input_tokens 64 
     --max_output_tokens 1536 --do_sample --top_p 0.9 --attn flash_attention_2
 """
-import datadirs
+import data_utils
 import generation
 
 from absl import app
@@ -28,14 +28,14 @@ def extract_sections(_):
     partial_state = PartialState()
 
     # get the files
-    label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
-    map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
-    tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
-    movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
+    label_file = os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv")
+    map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
+    tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
+    movie_scripts_dir = os.path.join(data_utils.DATADIR, "movie-scripts")
     filename = f"{generation.modelname()}-{FLAGS.max_output_tokens}-{FLAGS.partition}"
     if FLAGS.slice is not None:
         filename += f"-{FLAGS.slice}-of-{FLAGS.nslices}"
-    output_file = os.path.join(datadirs.datadir, f"50-modeling/extracts/{filename}.jsonl")
+    output_file = os.path.join(data_utils.DATADIR, f"50-modeling/extracts/{filename}.jsonl")
 
     # read data
     partial_state.print("reading data")
