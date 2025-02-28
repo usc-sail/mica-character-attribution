@@ -1,5 +1,5 @@
 """Prompting utilities"""
-import datadirs
+import data_utils
 
 from absl import flags
 from accelerate import PartialState
@@ -94,9 +94,9 @@ def modelname():
     if FLAGS.gemini_model is not None:
         return FLAGS.gemini_model
     if FLAGS.hf_model is not None:
-        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.hf_model)
+        model_name_or_path = os.path.join(data_utils.DATADIR, FLAGS.hf_model)
         if os.path.exists(model_name_or_path):
-            model_name_or_path = re.sub(os.path.join(datadirs.datadir, "50-modeling/finetune/") + "/",
+            model_name_or_path = re.sub(os.path.join(data_utils.DATADIR, "50-modeling/finetune/") + "/",
                                         "",
                                         model_name_or_path)
             model_name_or_path = model_name_or_path.replace("/", "--")
@@ -206,7 +206,7 @@ class HF:
             quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         else:
             quantization_config = None
-        model_name_or_path = os.path.join(datadirs.datadir, FLAGS.hf_model)
+        model_name_or_path = os.path.join(data_utils.DATADIR, FLAGS.hf_model)
         if not os.path.exists(model_name_or_path):
             model_name_or_path = FLAGS.hf_model
         self.model = AutoModelForCausalLM.from_pretrained(model_name_or_path,
