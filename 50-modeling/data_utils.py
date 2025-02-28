@@ -2,15 +2,39 @@
 
 Each data sample contains the following keys: key, docid, character, attribute, text, label, partition
 """
-import datadirs
-
 import collections
+from datasets import Dataset
 import jsonlines
+import numpy as np
 import os
 import pandas as pd
 import pickle
 import random
+import socket
 import string
+import tqdm
+from transformers import AutoTokenizer
+from typing import List, Dict, Union, Tuple
+
+HOST = socket.gethostname()
+if HOST == "redondo":
+    # lab server
+    DATADIR = "/data1/sbaruah/mica-character-attribution"
+elif HOST.endswith("hpc.usc.edu"):
+    # university HPC compute
+    DATADIR = "/scratch1/sbaruah/mica-character-attribution"
+else:
+    # AWS EC2
+    DATADIR = "/home/ubuntu/data/mica-character-attribution"
+
+TEMPLATE = ("Given the definition of a character attribute or trope, the name of a character, and a story or segments "
+            "of a story where the character appears, speaks or is mentioned, answer 'yes' or 'no' if the character "
+            "portrays or is associated with the attribute or trope in the story.\n\nATTRIBUTE: $ATTRIBUTE$"
+            "\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$. \n\n ANSWER: $ANSWER$")
+ANSWER_TEMPLATE = " \n\n ANSWER:"
+CHARACTER_TOKEN = "[CHARACTER]"
+ATTRIBUTE_TOKEN = "[ATTRIBUTE]"
+CONTEXT_TOKEN = "[CONTEXT]"
 
 def load_extracts(extracts_file):
     """Load extracts data"""
@@ -44,8 +68,8 @@ def load_contexts(contexts_file):
                                    "label": obj["label"],
                                    "partition": obj["partition"]})
     else:
-        label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
-        tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
+        label_file = os.path.join(DATADIR, "CHATTER/chatter.csv")
+        tropes_file = os.path.join(DATADIR, "CHATTER/tropes.csv")
         label_df = pd.read_csv(label_file, index_col=None)
         tropes_df = pd.read_csv(tropes_file, index_col=None)
         characterid_to_ixs = collections.defaultdict(list)
@@ -73,7 +97,7 @@ def load_contexts(contexts_file):
 
 def load_personet(test=False):
     """Load personet data"""
-    personet_dir = os.path.join(datadirs.datadir, "PERSONET")
+    personet_dir = os.path.join(DATADIR, "PERSONET")
     with jsonlines.open(os.path.join(personet_dir, "test.jsonl")) as reader:
         data = list(reader)
     for obj in data:
@@ -109,8 +133,8 @@ def load_personet(test=False):
 
 def load_story2personality():
     """Load story2personality data"""
-    filepath = os.path.join(datadirs.datadir, "STORY2PERSONALITY/BERT.tok.pkl")
-    definition_filepath = os.path.join(datadirs.datadir, "STORY2PERSONALITY/personality-definitions.txt")
+    filepath = os.path.join(DATADIR, "STORY2PERSONALITY/BERT.tok.pkl")
+    definition_filepath = os.path.join(DATADIR, "STORY2PERSONALITY/personality-definitions.txt")
     story2personality = pickle.load(open(filepath, mode="rb"))
     personality2definition = {}
     personality2name = {"E": "Extraversion",
@@ -157,10 +181,73 @@ def load_story2personality():
                                        "partition": "test"})
     return processed_data
 
+def create_dataset(tokenizer: AutoTokenizer,
+                   data: List[Dict[str, Union[str, int]]],
+                   instrtune = False,
+                   batch_size = 256,
+                   instr_max_seqlen = 1024,
+                   disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
+    """Create Dataset object and evaluation dataframe from data array"""
+    texts = []
+    rows = []
+    for obj in data:
+        if instrtune:
+            text = (TEMPLATE
+                    .replace("$ANSWER$", "yes" if obj["label"] == 1 else "no")
+                    .replace("$CHARACTER$", obj["character"])
+                    .replace("$ATTRIBUTE$", obj["attribute-definition"])
+                    .replace("$STORY$", obj["text"])
+                    )
+        else:
+            text = (f"{ATTRIBUTE_TOKEN}{obj['attribute-definition']}{CHARACTER_TOKEN}{obj['character']}{CONTEXT_TOKEN}"
+                    f"{obj['text']}")
+        row = [obj["key"], obj["attribute-name"], obj["label"]]
+        rows.append(row)
+        texts.append(text)
+    df = pd.DataFrame(rows, columns=["key", "attribute", "label"])
+    input_ids, attention_mask = [], []
+    n_batches = int(np.ceil(len(texts)/batch_size))
+    for i in tqdm.trange(n_batches, desc="tokenization", disable=disable_progress_bar):
+        batch_texts = texts[batch_size * i: batch_size * (i + 1)]
+        encoding = tokenizer(batch_texts,
+                             padding=False,
+                             add_special_tokens=True,
+                             return_overflowing_tokens=False,
+                             return_length=False)
+        input_ids.extend(encoding["input_ids"])
+        attention_mask.extend(encoding["attention_mask"])
+    if instrtune:
+        yes_answer_sp_mask = tokenizer(ANSWER_TEMPLATE + " yes",
+                                       add_special_tokens=True,
+                                       return_special_tokens_mask=True)["special_tokens_mask"]
+        no_answer_sp_mask = tokenizer(ANSWER_TEMPLATE + " no",
+                                       add_special_tokens=True,
+                                       return_special_tokens_mask=True)["special_tokens_mask"]
+        is_first_token_sp = yes_answer_sp_mask[0] == 1
+        is_last_token_sp = yes_answer_sp_mask[-1] == 1
+        yes_answer_size = len(yes_answer_sp_mask) - is_first_token_sp - is_last_token_sp
+        no_answer_size = len(no_answer_sp_mask) - is_first_token_sp - is_last_token_sp
+        for i in tqdm.trange(len(input_ids), desc="truncation", disable=disable_progress_bar):
+            if len(input_ids[i]) > instr_max_seqlen:
+                if data[i]["label"] == 1:
+                    start = -is_last_token_sp - yes_answer_size - (len(input_ids[i]) - instr_max_seqlen)
+                    end = -is_last_token_sp - yes_answer_size
+                else:
+                    start = -is_last_token_sp - no_answer_size - (len(input_ids[i]) - instr_max_seqlen)
+                    end = -is_last_token_sp - no_answer_size
+                input_ids[i] = input_ids[i][:start] + input_ids[i][end:]
+                attention_mask[i] = attention_mask[i][:start] + attention_mask[i][end:]
+        dataset = Dataset.from_dict({"input_ids": input_ids, "attention_mask": attention_mask})
+    else:
+        dataset = Dataset.from_dict({"input_ids": input_ids,
+                                     "attention_mask": attention_mask,
+                                     "labels": df["label"].tolist()})
+    return dataset, df
+
 if __name__ == '__main__':
-    extracts_file = os.path.join(datadirs.datadir, "50-modeling/extracts/Llama-3.1-8B-Instruct-1536-train.jsonl")
-    contexts_file1 = os.path.join(datadirs.datadir, "50-modeling/contexts/25P-1000C-random.jsonl")
-    contexts_file2 = os.path.join(datadirs.datadir,
+    extracts_file = os.path.join(DATADIR, "50-modeling/extracts/Llama-3.1-8B-Instruct-1536-train.jsonl")
+    contexts_file1 = os.path.join(DATADIR, "50-modeling/contexts/25P-1000C-random.jsonl")
+    contexts_file2 = os.path.join(DATADIR,
                                   "50-modeling/contexts/25P-1000C-all-mpnet-base-v2-0.05NEG-0.05POS.jsonl")
     print("testing...")
     print("load extracts")

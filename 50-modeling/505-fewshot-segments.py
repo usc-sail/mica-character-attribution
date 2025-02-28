@@ -3,7 +3,7 @@
 Example Usage:
 accelerate launch 505-fewshot-segments.py --shots 2 --hf_model meta-llama/Llama-3.1-8B-Instruct --max_output_tokens 1
 """
-import datadirs
+import data_utils
 import generation
 
 from absl import app
@@ -30,13 +30,13 @@ def prompt(_):
     partial_state = PartialState()
 
     # get file paths
-    segments_dir = os.path.join(datadirs.datadir, "50-modeling/segments")
-    label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
-    map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
-    tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
+    segments_dir = os.path.join(data_utils.DATADIR, "50-modeling/segments")
+    label_file = os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv")
+    map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
+    tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
     modelname = generation.modelname()
     output_dir = os.path.join(
-        datadirs.datadir,
+        data_utils.DATADIR,
         f"50-modeling/fewshot-segments/{modelname}-{FLAGS.shots}shot-{FLAGS.example_selection_strategy}")
 
     # read data

@@ -5,7 +5,7 @@ python 501-priors.py --hf_model meta-llama/Llama-3.1-8B-Instruct --max_output_to
 python 501-priors.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> --max_output_tokens 256
 python 501-priors.py --gpt_model gpt-4o-mini --gpt_key <PATH_TO_GPT_KEY_FILE> --max_output_tokens 256
 """
-import datadirs
+import data_utils
 import generation
 
 from absl import app
@@ -27,12 +27,12 @@ def prompt_priors(_):
 
     # read data
     partial_state.print("read data")
-    data_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/chatter.csv"), index_col=None)
-    map_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv"), index_col=None, dtype=str)
-    metadata_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/movie-metadata.csv"), index_col=None, dtype=str)
-    tropes_df = pd.read_csv(os.path.join(datadirs.datadir, "CHATTER/tropes.csv"), index_col=None)
+    data_df = pd.read_csv(os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv"), index_col=None)
+    map_df = pd.read_csv(os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv"), index_col=None, dtype=str)
+    metadata_df = pd.read_csv(os.path.join(data_utils.DATADIR, "CHATTER/movie-metadata.csv"), index_col=None, dtype=str)
+    tropes_df = pd.read_csv(os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv"), index_col=None)
     modelname = generation.modelname()
-    output_dir = os.path.join(datadirs.datadir, f"50-modeling/priors/{modelname}")
+    output_dir = os.path.join(data_utils.DATADIR, f"50-modeling/priors/{modelname}")
 
     # process data
     partial_state.print("process data")

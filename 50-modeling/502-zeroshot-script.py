@@ -6,7 +6,7 @@ python 502-zeroshot-script.py --hf_model meta-llama/Llama-3.1-8B-Instruct --batc
 python 502-zeroshot-script.py --gemini_model gemini-1.5-flash --gemini_key <PATH_TO_GEMINI_KEY_FILE> 
        --max_output_tokens 256
 """
-import datadirs
+import data_utils
 import generation
 
 from absl import app
@@ -28,12 +28,12 @@ def prompt(_):
     partial_state = PartialState()
 
     # get file paths
-    movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
-    label_file = os.path.join(datadirs.datadir, "CHATTER/chatter.csv")
-    map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
-    tropes_file = os.path.join(datadirs.datadir, "CHATTER/tropes.csv")
+    movie_scripts_dir = os.path.join(data_utils.DATADIR, "movie-scripts")
+    label_file = os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv")
+    map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
+    tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
     modelname = generation.modelname()
-    output_dir = os.path.join(datadirs.datadir, f"50-modeling/zeroshot-script/{modelname}")
+    output_dir = os.path.join(data_utils.DATADIR, f"50-modeling/zeroshot-script/{modelname}")
 
     # get the character name and the scripts where they appear
     partial_state.print("read data")

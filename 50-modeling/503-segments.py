@@ -1,5 +1,5 @@
 """Extract character segments from script"""
-import datadirs
+import data_utils
 
 import numpy as np
 import os
@@ -26,9 +26,9 @@ def write_statistics(arr, name, fw):
 def extract_segments():
     """Extract segments from movie script where character is mentioned"""
     # get file paths
-    movie_scripts_dir = os.path.join(datadirs.datadir, "movie-scripts")
-    map_file = os.path.join(datadirs.datadir, "CHATTER/character-movie-map.csv")
-    output_dir = os.path.join(datadirs.datadir, "50-modeling/segments")
+    movie_scripts_dir = os.path.join(data_utils.DATADIR, "movie-scripts")
+    map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
+    output_dir = os.path.join(data_utils.DATADIR, "50-modeling/segments")
     os.makedirs(output_dir, exist_ok=True)
 
     # read data
