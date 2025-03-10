@@ -23,6 +23,7 @@ from typing import Dict
 
 flags.DEFINE_string("contexts_file", default=None, help="contexts data file")
 flags.DEFINE_string("extracts_file", default=None, help="extracts data file")
+flags.DEFINE_bool("anonymize", default=False, help="use anonymized contexts or extracts during training")
 flags.DEFINE_string("model", default="meta-llama/Llama-3.1-8B-Instruct", help="huggingface model name")
 flags.DEFINE_bool("instrtune", default=False, help="do instruction tuning instead of classification")
 flags.DEFINE_bool("bf16", default=False, help="use brain floating point (default=fp16)")
@@ -224,10 +225,20 @@ def finetune(_):
     if FLAGS.contexts_file is not None:
         contexts_file = os.path.join(data_utils.DATADIR, "50-modeling/contexts", FLAGS.contexts_file)
         data = data_utils.load_contexts(contexts_file)
+        if FLAGS.anonymize:
+            anonymized_contexts_file = os.path.join(data_utils.DATADIR,
+                                                    "50-modeling/anonymized-contexts",
+                                                    FLAGS.contexts_file)
+            anonymized_data = data_utils.load_contexts(anonymized_contexts_file)
     else:
         extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
         data = data_utils.load_extracts(extracts_file)
-    train_data = list(filter(lambda obj: obj["partition"] == "train", data))
+        if FLAGS.anonymize:
+            anonymized_extracts_file = os.path.join(data_utils.DATADIR,
+                                                    "50-modeling/anonymized-extracts",
+                                                    FLAGS.extracts_file)
+            anonymized_data = data_utils.load_extracts(anonymized_extracts_file)
+    train_data = list(filter(lambda obj: obj["partition"] == "train", anonymized_data if FLAGS.anonymize else data))
     dev_data = list(filter(lambda obj: obj["partition"] == "dev", data))
     test_data = list(filter(lambda obj: obj["partition"] == "test", data))
     personet_data = data_utils.load_personet(test=True)

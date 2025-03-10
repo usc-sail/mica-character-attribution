@@ -1,6 +1,7 @@
 """Utility functions to load data for the CHATTER, PERSONET and STORY2PERSONALITY datasets in a standard format
 
-Each data sample contains the following keys: key, docid, character, attribute, text, label, partition
+Each data sample contains the following keys: key, docid, character, attribute-name, attribute-definition, text, label,
+partition
 """
 import collections
 from datasets import Dataset
