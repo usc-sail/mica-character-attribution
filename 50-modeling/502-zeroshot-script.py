@@ -21,6 +21,7 @@ import string
 import tqdm
 
 flags.DEFINE_integer("runs", default=1, help="number of runs")
+flags.DEFINE_bool("anonymize", default=False, help="use anonymized scripts")
 FLAGS = flags.FLAGS
 
 def prompt(_):
@@ -33,7 +34,10 @@ def prompt(_):
     map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
     modelname = generation.modelname()
-    output_dir = os.path.join(data_utils.DATADIR, f"50-modeling/zeroshot-script/{modelname}")
+    output_dir = os.path.join(data_utils.DATADIR,
+                              "50-modeling",
+                              "zeroshot-anonymized-script" if FLAGS.anonymize else "zeroshot-script",
+                              modelname)
 
     # get the character name and the scripts where they appear
     partial_state.print("read data")
@@ -47,7 +51,9 @@ def prompt(_):
     for imdbid in tqdm.tqdm(map_df["imdb-id"].unique(),
                             desc="read movie scripts",
                             disable=not partial_state.is_main_process):
-        script_file = os.path.join(movie_scripts_dir, imdbid, "script.txt")
+        script_file = os.path.join(movie_scripts_dir,
+                                   imdbid,
+                                   "anonymized-script.txt" if FLAGS.anonymize else "script.txt")
         imdbid_to_script[imdbid] = open(script_file).read().strip()
     for _, row in tropes_df.iterrows():
         trope_to_definition[row.trope] = row.summary
@@ -108,7 +114,7 @@ def prompt(_):
     os.makedirs(output_dir, exist_ok=True)
     for _, row in test_df.iterrows():
         characterid, trope, label = row.character, row.trope, row.label
-        name = characterid_to_name[characterid]
+        name = "CHARACTER" + characterid[1:] if FLAGS.anonymize else characterid_to_name[characterid]
         definition = trope_to_definition[trope]
         for imdbid in characterid_to_imdbids[characterid]:
             script = imdbid_to_script[imdbid]

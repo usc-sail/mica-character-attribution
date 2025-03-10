@@ -18,6 +18,7 @@ import string
 import tqdm
 
 flags.DEFINE_integer("runs", default=1, help="number of runs")
+flags.DEFINE_bool("anonymize", default=False, help="use anonymized segments")
 FLAGS = flags.FLAGS
 
 def prompt(_):
@@ -25,12 +26,17 @@ def prompt(_):
     partial_state = PartialState()
 
     # get file paths
-    segments_dir = os.path.join(data_utils.DATADIR, "50-modeling/segments")
+    segments_dir = os.path.join(data_utils.DATADIR,
+                                "50-modeling",
+                                "anonymized-segments" if FLAGS.anonymize else "segments")
     label_file = os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv")
     map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
     modelname = generation.modelname()
-    output_dir = os.path.join(data_utils.DATADIR, f"50-modeling/zeroshot-segments/{modelname}")
+    output_dir = os.path.join(data_utils.DATADIR,
+                              "50-modeling",
+                              "zeroshot-anonymized-segments" if FLAGS.anonymize else "zeroshot-segments",
+                              modelname)
 
     # read data
     partial_state.print("read data")
@@ -103,7 +109,8 @@ def prompt(_):
         for imdbid in characterid_to_imdbids[characterid]:
             if (characterid, imdbid) in characterid_and_imdbid_to_segment:
                 n_segments += 1
-                name = characterid_and_imdbid_to_name[(characterid, imdbid)]
+                name = ("CHARACTER" + characterid[1:]
+                        if FLAGS.anonymize else characterid_and_imdbid_to_name[(characterid, imdbid)])
                 segment = characterid_and_imdbid_to_segment[(characterid, imdbid)]
                 prompt = (template.replace("$TROPE$", trope).replace("$CHARACTER$", name)
                         .replace("$DEFINITION$", definition).replace("$SEGMENTS$", segment))

@@ -22,6 +22,7 @@ flags.DEFINE_enum("example_selection_strategy",
                   default="random",
                   enum_values=["random", "character", "trope"],
                   help="strategy used to select examples")
+flags.DEFINE_bool("anonymize", default=False, help="use anonymized segments")
 flags.DEFINE_integer("runs", default=1, help="number of runs")
 FLAGS = flags.FLAGS
 
@@ -30,14 +31,18 @@ def prompt(_):
     partial_state = PartialState()
 
     # get file paths
-    segments_dir = os.path.join(data_utils.DATADIR, "50-modeling/segments")
+    segments_dir = os.path.join(data_utils.DATADIR,
+                                "50-modeling",
+                                "anonymized-segments" if FLAGS.anonymize else "segments")
     label_file = os.path.join(data_utils.DATADIR, "CHATTER/chatter.csv")
     map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
     tropes_file = os.path.join(data_utils.DATADIR, "CHATTER/tropes.csv")
     modelname = generation.modelname()
     output_dir = os.path.join(
         data_utils.DATADIR,
-        f"50-modeling/fewshot-segments/{modelname}-{FLAGS.shots}shot-{FLAGS.example_selection_strategy}")
+        "50-modeling",
+        "fewshot-anonymized-segments" if FLAGS.anonymize else "fewshot-segments",
+        f"{modelname}-{FLAGS.shots}shot-{FLAGS.example_selection_strategy}")
 
     # read data
     partial_state.print("read data")
@@ -123,7 +128,8 @@ def prompt(_):
         for imdbid in characterid_to_imdbids[characterid]:
             if (characterid, imdbid) in characterid_and_imdbid_to_segment:
                 n_segments += 1
-                name = characterid_and_imdbid_to_name[(characterid, imdbid)]
+                name = ("CHARACTER" + characterid[1:]
+                        if FLAGS.anonymize else characterid_and_imdbid_to_name[(characterid, imdbid)])
                 segment = characterid_and_imdbid_to_segment[(characterid, imdbid)]
                 example = (example_template
                            .replace("$CHARACTER$", name)

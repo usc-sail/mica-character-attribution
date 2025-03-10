@@ -1,11 +1,16 @@
 """Extract character segments from script"""
 import data_utils
 
+from absl import app
+from absl import flags
 import numpy as np
 import os
 import pandas as pd
 import re
 import tqdm
+
+flags.DEFINE_bool("anonymize", default=False, help="anonymize character names")
+FLAGS = flags.FLAGS
 
 def write_statistics(arr, name, fw):
     mean = np.mean(arr)
@@ -23,12 +28,14 @@ def write_statistics(arr, name, fw):
         fw.write(f"{f} %tile = {np.quantile(arr, f):.2f}\n")
     fw.write("\n")
 
-def extract_segments():
+def extract_segments(_):
     """Extract segments from movie script where character is mentioned"""
     # get file paths
     movie_scripts_dir = os.path.join(data_utils.DATADIR, "movie-scripts")
     map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
-    output_dir = os.path.join(data_utils.DATADIR, "50-modeling/segments")
+    output_dir = os.path.join(data_utils.DATADIR,
+                              "50-modeling",
+                              "anonymized-segments" if FLAGS.anonymize else "segments")
     os.makedirs(output_dir, exist_ok=True)
 
     # read data
@@ -42,6 +49,37 @@ def extract_segments():
         mentions_df = pd.read_csv(mentions_file, index_col=None)
         imdbid_to_segments_df[imdbid] = segments_df
         imdbid_to_mentions_df[imdbid] = mentions_df
+
+    # anonymize segments
+    if FLAGS.anonymize:
+        name_and_imdbid_to_characterid = {}
+        for _, row in map_df.iterrows():
+            name_and_imdbid_to_characterid[(row["name"], row["imdb-id"])] = row["character"]
+        n = map_df["character"].str[1:].astype(int).max() + 1
+        for imdbid in tqdm.tqdm(imdbid_to_segments_df.keys(), desc="anonymizing"):
+            segments_df = imdbid_to_segments_df[imdbid]
+            mentions_df = imdbid_to_mentions_df[imdbid]
+            segments_df = segments_df.merge(mentions_df, how="left", on="segment-id")
+            rows = []
+            for segment_id, segment_df in segments_df.groupby("segment-id", sort=False):
+                if pd.notna(segment_df["imdb-character"].values[0]):
+                    segment_df = segment_df.sort_values("start", ascending=False)
+                    segment_text = segment_df["segment-text"].values[0]
+                    for _, row in segment_df.iterrows():
+                        name, start, end = row["imdb-character"], int(row["start"]), int(row["end"])
+                        if (name, imdbid) in name_and_imdbid_to_characterid:
+                            characterid = name_and_imdbid_to_characterid[(name, imdbid)]
+                        else:
+                            characterid = "C" + str(n).zfill(4)
+                            name_and_imdbid_to_characterid[(row["imdb-character"], imdbid)] = characterid
+                            n += 1
+                        charactername = "CHARACTER" + characterid[1:]
+                        segment_text = segment_text[:start] + charactername + segment_text[end:]
+                    rows.append([segment_id, segment_text])
+                else:
+                    rows.append([segment_id, segment_df["segment-text"].values[0]])
+            segments_df = pd.DataFrame(rows, columns=["segment-id", "segment-text"])
+            imdbid_to_segments_df[imdbid] = segments_df
 
     # process data
     paragraph_sizes = []
@@ -100,4 +138,4 @@ def extract_segments():
         write_statistics(n_paragraphs_per_character, "paragraphs per character", fw)
 
 if __name__ == '__main__':
-    extract_segments()
+    app.run(extract_segments)
