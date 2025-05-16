@@ -37,7 +37,7 @@ CHARACTER_TOKEN = "[CHARACTER]"
 ATTRIBUTE_TOKEN = "[ATTRIBUTE]"
 CONTEXT_TOKEN = "[CONTEXT]"
 
-def load_extracts(extracts_file):
+def load_extracts(extracts_file, anonymize=False):
     """Load extracts data"""
     with jsonlines.open(extracts_file) as reader:
         data = list(reader)
@@ -45,7 +45,7 @@ def load_extracts(extracts_file):
     for obj in data:
         processed_data.append({"key": f"{obj['character']}-{obj['trope']}",
                                "docid": obj["imdbid"],
-                               "character": obj["name"],
+                               "character": "CHARACTER" + obj["character"][1:] if anonymize else obj["name"],
                                "attribute-name": obj["trope"],
                                "attribute-definition": obj["definition"],
                                "text": obj["text"],
@@ -53,7 +53,7 @@ def load_extracts(extracts_file):
                                "partition": obj["partition"]})
     return processed_data
 
-def load_contexts(contexts_file):
+def load_contexts(contexts_file, anonymize=False):
     """Load contexts data"""
     with jsonlines.open(contexts_file) as reader:
         data = list(reader)
@@ -62,7 +62,7 @@ def load_contexts(contexts_file):
         for obj in data:
             processed_data.append({"key": f"{obj['character']}-{obj['trope']}",
                                    "docid": obj["imdbid"],
-                                   "character": obj["name"],
+                                   "character": "CHARACTER" + obj["character"][1:] if anonymize else obj["name"],
                                    "attribute-name": obj["trope"],
                                    "attribute-definition": obj["definition"],
                                    "text": obj["text"],
@@ -84,12 +84,13 @@ def load_contexts(contexts_file):
             characterid, trope, partition = row["character"], row["trope"], row["partition"]
             definition = trope_to_definition[trope]
             label = row["label"] if partition == "test" else row["tvtrope-label"]
+            label = int(label)
             for i in characterid_to_ixs[characterid]:
                 obj = data[i]
                 processed_data.append({"key": f"{characterid}-{trope}",
                                        "docid": obj["imdbid"],
-                                       "character": obj["name"],
-                                       "attribute-name": obj["trope"],
+                                       "character": "CHARACTER" + obj["character"][1:] if anonymize else obj["name"],
+                                       "attribute-name": trope,
                                        "attribute-definition": definition,
                                        "text": obj["text"],
                                        "label": label,
