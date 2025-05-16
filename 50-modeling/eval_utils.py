@@ -1,6 +1,7 @@
 """Evaluation class for instruction-tuning and classification models"""
 import numpy as np
 import pandas as pd
+import scipy.special
 from sklearn.metrics import accuracy_score, roc_auc_score, precision_recall_fscore_support, f1_score
 from transformers.trainer import EvalPrediction
 from typing import Dict
@@ -103,8 +104,9 @@ class ComputeMetrics:
     def compute_instruction_metrics(self, evalprediction: EvalPrediction) -> Dict[str, float]:
         """Compute metrics for the instruction-tuning method"""
         labels = evalprediction.label_ids
-        probs = evalprediction.predictions[:, :, 0]
-        output_ids = evalprediction.predictions[:, :, 1]
+        predictions = evalprediction.predictions
+        probs = predictions[:, :, 0]
+        output_ids = predictions[:, :, 1].astype(int)
         rx, cx = np.where(labels != -100)
         predictions = list(map(lambda x: x.strip().lower(),
                                self.tokenizer.batch_decode(output_ids[rx, cx - 1].reshape(-1, 1))))
@@ -117,7 +119,7 @@ class ComputeMetrics:
     def compute_classification_metrics(self, evalprediction: EvalPrediction) -> Dict[str, float]:
         """Compute metrics for the classification method"""
         logits = evalprediction.predictions
-        probs = np.exp(logits)/np.sum(np.exp(logits), axis=-1, keepdims=True)
+        probs = scipy.special.softmax(logits, axis=-1)
         self.eval_df["pred"] = np.argmax(probs, axis=-1)
         self.eval_df["prob"] = np.max(probs, axis=-1)
         return self._compute_metrics()
