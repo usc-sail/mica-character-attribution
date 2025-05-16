@@ -35,11 +35,11 @@ flags.DEFINE_enum("attn",
                   help="attention implementation")
 flags.DEFINE_integer("dataset_batch_size", default=4096, help="dataset batch size for tokenization")
 flags.DEFINE_integer("train_batch_size", default=1, help="training batch size")
+flags.DEFINE_bool("eval", default=True, help="do evaluation during training")
 flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
 flags.DEFINE_integer("eval_accumulation_steps",
                      default=None,
                      help="number of prediction steps to accumulate the output tensors for, before moving to CPU")
-flags.DEFINE_bool("eval_on_start", default=False, help="evaluate before training begins")
 flags.DEFINE_integer("eval_delay",
                      default=None,
                      help="Number of epochs or steps to wait for before the first evaluation can be performed")
@@ -59,11 +59,7 @@ flags.DEFINE_integer("alpha", default=64, help="lora alpha")
 flags.DEFINE_float("dropout", default=0, help="dropout")
 flags.DEFINE_float("weight_decay", default=0, help="weight decay")
 flags.DEFINE_float("max_grad_norm", default=10, help="maximum gradient norm")
-flags.DEFINE_enum("metric",
-                  default="accuracy",
-                  enum_values=["accuracy", "f1", "precision", "recall"],
-                  help="metric to compare models")
-flags.DEFINE_bool("save_model", default=False, help="save model checkpoint that performs best on dev set")
+flags.DEFINE_bool("save_model", default=False, help="save model safetensors at the end of training")
 
 def input_checker(args):
     """Check at least one of contexts_file or extracts_file is given"""
@@ -122,7 +118,7 @@ def preprocess_logits_for_metrics(logits: torch.Tensor, _) -> torch.Tensor:
     We use this functions to save space primarily, converting batch-size x seqlen x vocab-size tensors to batch-size
     x seqlen x 2 tensors
     """
-    probs = logits.softmax(dim=-1) # batch-size x seqlen x vocab-size
+    probs = logits.softmax(dim=-1).float() # batch-size x seqlen x vocab-size
     max_output = torch.max(probs, dim=-1)
     z = torch.cat((max_output.values.unsqueeze(dim=-1),
                    max_output.indices.unsqueeze(dim=-1)), dim=-1) # batch-size x seqlen x 2
@@ -137,12 +133,12 @@ def plot_logs(logs, plots_file):
             train_steps.append(log["step"])
         elif "eval_loss" in log:
             dev_loss.append(log["eval_loss"])
-            dev_metric.append(log[f"eval_{FLAGS.metric}"])
+            dev_metric.append(log[f"eval_accuracy"])
             dev_steps.append(log["step"])
     plt.figure(figsize=(25, 12))
     plt.plot(train_steps, train_loss, color="blue", lw=5, marker="o", ms=15, label="train loss")
     plt.plot(dev_steps, dev_loss, color="red", lw=5, marker="s", ms=15, label="dev loss")
-    plt.plot(dev_steps, dev_metric, color="green", lw=5, marker="^", ms=15, label=f"dev {FLAGS.metric}")
+    plt.plot(dev_steps, dev_metric, color="green", lw=5, marker="^", ms=15, label=f"dev accuracy")
     plt.ylabel("metric")
     plt.xlabel("step")
     plt.legend(fontsize="x-large")
@@ -156,6 +152,8 @@ def finetune(_):
         input_dir = FLAGS.contexts_file[:-6]
     else:
         input_dir = FLAGS.extracts_file[:-6]
+    if FLAGS.anonymize:
+        input_dir = input_dir + "-anonymized"
     model_dir = FLAGS.model.replace("/", "--")
     if FLAGS.load_4bit:
         model_dir += "-4bit"
@@ -192,6 +190,7 @@ def finetune(_):
             logging.info(f"{'contexts-file':30s} = {FLAGS.contexts_file}")
         else:
             logging.info(f"{'extracts-file':30s} = {FLAGS.extracts_file}")
+        logging.info(f"{'anonymize':30s} = {FLAGS.anonymize}")
         method = "instruction-tuning" if FLAGS.instrtune else "classification"
         logging.info(f"{'method':30s} = {method}")
         logging.info(f"{'model':30s} = {FLAGS.model}")
@@ -201,15 +200,16 @@ def finetune(_):
         logging.info(f"{'quantization':30s} = {quantization}")
         logging.info(f"{'attention':30s} = {FLAGS.attn}")
         logging.info(f"{'train-batch-size':30s} = {FLAGS.train_batch_size}")
+        logging.info(f"{'do-eval':30s} = {FLAGS.eval}")
         logging.info(f"{'eval-batch-size':30s} = {FLAGS.eval_batch_size}")
         logging.info(f"{'eval-accumulation-steps':30s} = {FLAGS.eval_accumulation_steps}")
+        logging.info(f"{'eval-delay':30s} = {FLAGS.eval_delay}")
         logging.info(f"{'learning-rate':30s} = {FLAGS.lr}")
         logging.info(f"{'warmup-steps':30s} = {FLAGS.warmup_steps}")
         logging.info(f"{'optimizer':30s} = {FLAGS.optim}")
         logging.info(f"{'weight-decay':30s} = {FLAGS.weight_decay}")
         logging.info(f"{'max-grad-norm':30s} = {FLAGS.max_grad_norm}")
-        logging.info(f"{'metric':30s} = {FLAGS.metric}")
-        logging.info(f"{'max-sequence-length':30s} = {FLAGS.max_seq_len}")
+        logging.info(f"{'instrtune-max-sequence-length':30s} = {FLAGS.max_seq_len}")
         logging.info(f"{'train-steps':30s} = {FLAGS.train_steps}")
         logging.info(f"{'eval-steps':30s} = {FLAGS.eval_steps}")
         logging.info(f"{'logging-steps':30s} = {FLAGS.logging_steps}")
@@ -229,15 +229,15 @@ def finetune(_):
             anonymized_contexts_file = os.path.join(data_utils.DATADIR,
                                                     "50-modeling/anonymized-contexts",
                                                     FLAGS.contexts_file)
-            anonymized_data = data_utils.load_contexts(anonymized_contexts_file)
+            anonymized_data = data_utils.load_contexts(anonymized_contexts_file, anonymize=True)
     else:
         extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
-        data = data_utils.load_extracts(extracts_file)
+        data = data_utils.load_extracts(extracts_file, anonymize=FLAGS.anonymize)
         if FLAGS.anonymize:
             anonymized_extracts_file = os.path.join(data_utils.DATADIR,
                                                     "50-modeling/anonymized-extracts",
                                                     FLAGS.extracts_file)
-            anonymized_data = data_utils.load_extracts(anonymized_extracts_file)
+            anonymized_data = data_utils.load_extracts(anonymized_extracts_file, anonymize=True)
     train_data = list(filter(lambda obj: obj["partition"] == "train", anonymized_data if FLAGS.anonymize else data))
     dev_data = list(filter(lambda obj: obj["partition"] == "dev", data))
     test_data = list(filter(lambda obj: obj["partition"] == "test", data))
@@ -368,60 +368,34 @@ def finetune(_):
     log(f"PERSONET test tokens/sample: max = {max(personet_ntokens)}, min = {min(personet_ntokens)}, "
         f"95%tile = {np.quantile(personet_ntokens, 0.95):.1f}")
 
-    # create SFT config
+    # create SFT config or Training Args
+    kwargs = dict(output_dir=experiments_dir,
+                  eval_strategy="steps" if FLAGS.eval else "no",
+                  eval_steps=FLAGS.eval_steps,
+                  eval_delay=FLAGS.eval_delay,
+                  eval_accumulation_steps=FLAGS.eval_accumulation_steps,
+                  per_device_train_batch_size=FLAGS.train_batch_size,
+                  per_device_eval_batch_size=FLAGS.eval_batch_size,
+                  learning_rate=FLAGS.lr,
+                  warmup_steps=FLAGS.warmup_steps,
+                  weight_decay=FLAGS.weight_decay,
+                  max_grad_norm=FLAGS.max_grad_norm,
+                  max_steps=FLAGS.train_steps,
+                  seed=2025,
+                  data_seed=2025,
+                  logging_strategy="steps",
+                  logging_steps=FLAGS.logging_steps,
+                  bf16=FLAGS.bf16,
+                  fp16=not FLAGS.bf16,
+                  optim=FLAGS.optim,
+                  gradient_checkpointing_kwargs={"use_reentrant": False},
+                  save_strategy="no")
     if FLAGS.instrtune:
-        config = SFTConfig(output_dir=experiments_dir,
-                           eval_strategy="steps",
-                           eval_steps=FLAGS.eval_steps,
-                           eval_on_start=FLAGS.eval_on_start,
-                           eval_delay=FLAGS.eval_delay,
-                           eval_accumulation_steps=FLAGS.eval_accumulation_steps,
-                           per_device_train_batch_size=FLAGS.train_batch_size,
-                           per_device_eval_batch_size=FLAGS.eval_batch_size,
-                           learning_rate=FLAGS.lr,
-                           warmup_steps=FLAGS.warmup_steps,
-                           weight_decay=FLAGS.weight_decay,
-                           max_grad_norm=FLAGS.max_grad_norm,
-                           max_steps=FLAGS.train_steps,
-                           seed=2025,
-                           data_seed=2025,
-                           logging_strategy="steps",
-                           logging_steps=FLAGS.logging_steps,
-                           bf16=FLAGS.bf16,
-                           fp16=not FLAGS.bf16,
-                           optim=FLAGS.optim,
-                           max_seq_length=FLAGS.max_seq_len,
+        config = SFTConfig(max_seq_length=FLAGS.max_seq_len,
                            packing=False,
-                           save_strategy="best" if FLAGS.save_model else "no",
-                           metric_for_best_model=FLAGS.metric,
-                           save_only_model=True,
-                           save_total_limit=1)
+                           **kwargs)
     else:
-        config = TrainingArguments(output_dir=experiments_dir,
-                                   eval_strategy="steps",
-                                   eval_steps=FLAGS.eval_steps,
-                                   eval_on_start=FLAGS.eval_on_start,
-                                   eval_delay=FLAGS.eval_delay,
-                                   eval_accumulation_steps=FLAGS.eval_accumulation_steps,
-                                   per_device_train_batch_size=FLAGS.train_batch_size,
-                                   per_device_eval_batch_size=FLAGS.eval_batch_size,
-                                   learning_rate=FLAGS.lr,
-                                   warmup_steps=FLAGS.warmup_steps,
-                                   weight_decay=FLAGS.weight_decay,
-                                   max_grad_norm=FLAGS.max_grad_norm,
-                                   max_steps=FLAGS.train_steps,
-                                   seed=2025,
-                                   data_seed=2025,
-                                   logging_strategy="steps",
-                                   logging_steps=FLAGS.logging_steps,
-                                   bf16=FLAGS.bf16,
-                                   fp16=not FLAGS.bf16,
-                                   optim=FLAGS.optim,
-                                   gradient_checkpointing_kwargs={"use_reentrant": False},
-                                   save_strategy="best" if FLAGS.save_model else "no",
-                                   metric_for_best_model=FLAGS.metric,
-                                   save_only_model=True,
-                                   save_total_limit=1)
+        config = TrainingArguments(**kwargs)
 
     # create compute metrics instance
     compute_metrics = eval_utils.ComputeMetrics(tokenizer)
@@ -494,10 +468,17 @@ def finetune(_):
 
     # plot train loss, dev loss, and dev metric
     log("plotting")
-    with jsonlines.open(logs_file) as reader:
-        logs = list(reader)
-    plots_file = os.path.join(experiments_dir, "plot.png")
-    plot_logs(logs, plots_file)
+    if PARTIALSTATE.is_local_main_process:
+        with jsonlines.open(logs_file) as reader:
+            logs = list(reader)
+        plots_file = os.path.join(experiments_dir, "plot.png")
+        plot_logs(logs, plots_file)
+
+    PARTIALSTATE.wait_for_everyone()
+    # save model
+    if FLAGS.save_model:
+        log("saving model")
+        trainer.save_model(experiments_dir)
 
 if __name__ == '__main__':
     app.run(finetune)
