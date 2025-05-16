@@ -258,6 +258,7 @@ class HF:
                 batch_responses = self.tokenizer.batch_decode(batch_output, skip_special_tokens=True)
                 process_responses.extend(batch_responses)
                 print(f"PROCESS {self.partial_state.process_index}: Batch {i + 1} / {n_batches} done")
+                self.partial_state.wait_for_everyone()
             responses = [process_responses]
         responses_arr = gather_object(responses)
         responses = [response for responses in responses_arr for response in responses]

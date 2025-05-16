@@ -12,7 +12,12 @@ source ~/.bashrc
 cd /home1/sbaruah/mica-character-attribution
 source .venv/bin/activate
 cd 50-modeling
-accelerate launch --config_file deepspeed.yaml --num_processes 2 --gpu_ids 0,1 \
-    508-extracts.py --partition dev --slice $1 --nslices $2 \
+CMD="accelerate launch --config_file deepspeed.yaml --num_processes 2 --gpu_ids 0,1 508-extracts.py --partition dev \
     --hf_model meta-llama/Llama-3.1-8B-Instruct --attn flash_attention_2 \
-    --max_input_tokens 64 --max_output_tokens 1536 --do_sample --top_p 0.9
+    --max_input_tokens 64 --max_output_tokens 1536 --do_sample --top_p 0.9"
+# $CMD --slice $(($1)) --nslices $2
+# $CMD --slice $(($1 + 1)) --nslices $2
+# $CMD --slice $(($1 + 2)) --nslices $2
+# $CMD --slice $(($1 + 3)) --nslices $2
+$CMD --slice 14 --nslices 16
+$CMD --slice 15 --nslices 16
