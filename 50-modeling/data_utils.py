@@ -97,40 +97,51 @@ def load_contexts(contexts_file, anonymize=False):
                                        "partition": partition})
     return processed_data
 
-def load_personet(test=False):
+def load_personet():
     """Load personet data"""
     personet_dir = os.path.join(DATADIR, "PERSONET")
     with jsonlines.open(os.path.join(personet_dir, "test.jsonl")) as reader:
-        data = list(reader)
-    for obj in data:
+        test_data = list(reader)
+    for obj in test_data:
         obj["partition"] = "test"
-    if not test:
-        with jsonlines.open(os.path.join(personet_dir, "train.jsonl")) as reader:
-            train_data = list(reader)
-        for obj in train_data:
-            obj["partition"] = "train"
-        with jsonlines.open(os.path.join(personet_dir, "dev.jsonl")) as reader:
-            dev_data = list(reader)
-        for obj in dev_data:
-            obj["partition"] = "dev"
-        data += train_data + dev_data
+    with jsonlines.open(os.path.join(personet_dir, "train.jsonl")) as reader:
+        train_data = list(reader)
+    for obj in train_data:
+        obj["partition"] = "train"
+    with jsonlines.open(os.path.join(personet_dir, "dev.jsonl")) as reader:
+        dev_data = list(reader)
+    for obj in dev_data:
+        obj["partition"] = "dev"
     processed_data = []
-    for obj in data:
+    for obj in test_data + train_data + dev_data:
         traits = obj["options"]
         answer = ord(obj["answer"][1]) - ord("a")
         text = "\n".join([obj["history"], obj["snippet_former_context"], obj["snippet_underlined"],
                           obj["snippet_post_context"]])
         key = obj["key"] if "key" in obj else "".join(random.choice(string.ascii_letters + string.digits)
                                                       for _ in range(10))
-        for i, trait in enumerate(traits):
-            processed_data.append({"key": key,
-                                   "docid": obj["book_name"],
-                                   "character": obj["character"],
-                                   "attribute-name": trait,
-                                   "attribute-definition": trait,
-                                   "text": text,
-                                   "label": int(answer == i),
-                                   "partition": obj["partition"]})
+        processed_obj = {"key": key,
+                         "docid": obj["book_name"],
+                         "character": obj["character"],
+                         "text": text,
+                         "partition": obj["partition"]}
+        if obj["partition"] in ["test", "dev"]:
+            for i, trait in enumerate(traits):
+                processed_data.append({**processed_obj,
+                                       "attribute-name": trait,
+                                       "attribute-definition": trait,
+                                       "label": int(answer == i)})
+        else:
+            wrong_answer = random.choice([i for i in range(len(traits)) if i != answer])
+            positive_processed_obj = {**processed_obj,
+                                      "attribute-name": traits[answer],
+                                      "attribute-definition": traits[answer],
+                                      "label": 1}
+            negative_processed_obj = {**processed_obj,
+                                      "attribute-name": traits[wrong_answer],
+                                      "attribute-definition": traits[wrong_answer],
+                                      "label": 0}
+            processed_data.extend([positive_processed_obj, negative_processed_obj])
     return processed_data
 
 def load_story2personality():
