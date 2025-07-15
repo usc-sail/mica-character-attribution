@@ -12,6 +12,7 @@ import jsonlines
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import pandas as pd
 from peft import LoraConfig, TaskType, prepare_model_for_kbit_training, get_peft_model
 import random
 import torch
@@ -24,7 +25,7 @@ from typing import Dict
 flags.DEFINE_enum("train_dataset", default="chatter", enum_values=["chatter", "personet"], help="training dataset")
 flags.DEFINE_string("contexts_file", default=None, help="contexts data file")
 flags.DEFINE_string("extracts_file", default=None, help="extracts data file")
-flags.DEFINE_bool("anonymize", default=False, help="use anonymized contexts or extracts during training")
+flags.DEFINE_bool("anonymize", default=False, help="use anonymized contexts or extracts for training")
 flags.DEFINE_string("model", default="meta-llama/Llama-3.1-8B-Instruct", help="huggingface model name")
 flags.DEFINE_bool("instrtune", default=False, help="do instruction tuning instead of classification")
 flags.DEFINE_bool("bf16", default=False, help="use brain floating point (default=fp16)")
@@ -50,7 +51,8 @@ flags.DEFINE_string("optim",
                     default="adamw_torch",
                     help=("optimizer name (https://github.com/huggingface/transformers/blob/main/src/transformers/"
                           "training_args.py)"))
-flags.DEFINE_integer("max_seq_len", default=1024, help="maximum sequence length")
+flags.DEFINE_integer("chatter_instr_seqlen", default=1800, help="sequence length for chatter instructions")
+flags.DEFINE_integer("personet_instr_seqlen", default=1700, help="sequence length for personet instructions")
 flags.DEFINE_integer("train_steps", default=1024, help="training steps")
 flags.DEFINE_integer("eval_steps", default=32, help="training steps between successive evaluations")
 flags.DEFINE_integer("logging_steps", default=8, help="training steps between successive logging")
@@ -125,25 +127,32 @@ def preprocess_logits_for_metrics(logits: torch.Tensor, _) -> torch.Tensor:
                    max_output.indices.unsqueeze(dim=-1)), dim=-1) # batch-size x seqlen x 2
     return z
 
-def plot_logs(logs, plots_file):
+def plot_logs(logs, metric, experiments_dir):
     train_loss, train_steps = [], []
     dev_loss, dev_metric, dev_steps = [], [], []
+    rows = []
     for log in logs:
         if "loss" in log:
             train_loss.append(log["loss"])
             train_steps.append(log["step"])
+            rows.append([log["step"], "train", log["loss"], ""])
         elif "eval_loss" in log:
             dev_loss.append(log["eval_loss"])
-            dev_metric.append(log[f"eval_accuracy"])
+            dev_metric.append(log[metric])
             dev_steps.append(log["step"])
+            rows.append([log["step"], "dev", log["eval_loss"], log[metric]])
     plt.figure(figsize=(25, 12))
     plt.plot(train_steps, train_loss, color="blue", lw=5, marker="o", ms=15, label="train loss")
     plt.plot(dev_steps, dev_loss, color="red", lw=5, marker="s", ms=15, label="dev loss")
-    plt.plot(dev_steps, dev_metric, color="green", lw=5, marker="^", ms=15, label=f"dev accuracy")
+    plt.plot(dev_steps, dev_metric, color="green", lw=5, marker="^", ms=15, label=f"dev {metric}")
     plt.ylabel("metric")
     plt.xlabel("step")
     plt.legend(fontsize="x-large")
+    plots_file = os.path.join(experiments_dir, "plot.png")
+    progress_file = os.path.join(experiments_dir, "progress.csv")
     plt.savefig(plots_file)
+    df = pd.DataFrame(rows, columns=["step", "partition", "loss", metric])
+    df.to_csv(progress_file, index=False)
 
 def finetune(_):
     """Instruction finetune or train binary classification LLMs on the character attribution classification task"""
@@ -212,9 +221,10 @@ def finetune(_):
         logging.info(f"{'learning-rate':30s} = {FLAGS.lr}")
         logging.info(f"{'warmup-steps':30s} = {FLAGS.warmup_steps}")
         logging.info(f"{'optimizer':30s} = {FLAGS.optim}")
+        logging.info(f"{'CHATTER instruction length':30s} = {FLAGS.chatter_instr_seqlen}")
+        logging.info(f"{'PERSONET instruction length':30s} = {FLAGS.personet_instr_seqlen}")
         logging.info(f"{'weight-decay':30s} = {FLAGS.weight_decay}")
         logging.info(f"{'max-grad-norm':30s} = {FLAGS.max_grad_norm}")
-        logging.info(f"{'instrtune-max-sequence-length':30s} = {FLAGS.max_seq_len}")
         logging.info(f"{'train-steps':30s} = {FLAGS.train_steps}")
         logging.info(f"{'eval-steps':30s} = {FLAGS.eval_steps}")
         logging.info(f"{'logging-steps':30s} = {FLAGS.logging_steps}")
@@ -226,40 +236,54 @@ def finetune(_):
         logging.info("\n\n")
 
     # read data
-    log("reading data")
+    log("reading chatter data")
     if FLAGS.contexts_file is not None:
-        if FLAGS.anonymize:
-            contexts_file = os.path.join(data_utils.DATADIR, "50-modeling/anonymized-contexts", FLAGS.contexts_file)
-        else:
-            contexts_file = os.path.join(data_utils.DATADIR, "50-modeling/contexts", FLAGS.contexts_file)
-        chatter_data = data_utils.load_contexts(contexts_file, anonymize=FLAGS.anonymize)
+        contexts_file = os.path.join(data_utils.DATADIR, "50-modeling/contexts", FLAGS.contexts_file)
+        anonymized_contexts_file = os.path.join(data_utils.DATADIR,
+                                                "50-modeling/anonymized-contexts",
+                                                FLAGS.contexts_file)
+        chatter_data = data_utils.load_contexts(contexts_file)
+        anonymized_chatter_data = data_utils.load_contexts(anonymized_contexts_file, anonymize=True)
     else:
-        if FLAGS.anonymize:
-            extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/anonymized-extracts", FLAGS.extracts_file)
-        else:
-            extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
-        chatter_data = data_utils.load_extracts(extracts_file, anonymize=FLAGS.anonymize)
+        extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
+        anonymized_extracts_file = os.path.join(data_utils.DATADIR,
+                                                "50-modeling/anonymized-extracts",
+                                                FLAGS.extracts_file)
+        chatter_data = data_utils.load_extracts(extracts_file)
+        anonymized_chatter_data = data_utils.load_extracts(anonymized_extracts_file, anonymize=True)
+    log("reading personet data")
     personet_data = data_utils.load_personet()
     chatter_train_data = list(filter(lambda obj: obj["partition"] == "train", chatter_data))
     chatter_dev_data = list(filter(lambda obj: obj["partition"] == "dev", chatter_data))
     chatter_test_data = list(filter(lambda obj: obj["partition"] == "test", chatter_data))
+    anonymized_chatter_train_data = list(filter(lambda obj: obj["partition"] == "train", anonymized_chatter_data))
+    anonymized_chatter_dev_data = list(filter(lambda obj: obj["partition"] == "dev", anonymized_chatter_data))
+    anonymized_chatter_test_data = list(filter(lambda obj: obj["partition"] == "test", anonymized_chatter_data))
     personet_train_data = list(filter(lambda obj: obj["partition"] == "train", personet_data))
     personet_dev_data = list(filter(lambda obj: obj["partition"] == "dev", personet_data))
     personet_test_data = list(filter(lambda obj: obj["partition"] == "test", personet_data))
     if PARTIALSTATE.is_local_main_process:
-        log(f"{len(chatter_train_data)} CHATTER train examples")
-        log(f"{len(chatter_dev_data)} CHATTER dev examples")
-        log(f"{len(chatter_test_data)} CHATTER test examples")
-        log(f"{len(personet_train_data)} PERSONET train examples")
-        log(f"{len(personet_dev_data)} PERSONET dev examples")
-        log(f"{len(personet_test_data)} PERSONET test examples")
+        logging.info(f"{len(chatter_train_data)} CHATTER train examples")
+        logging.info(f"{len(chatter_dev_data)} CHATTER dev examples")
+        logging.info(f"{len(chatter_test_data)} CHATTER test examples")
+        logging.info(f"{len(anonymized_chatter_train_data)} ANONYMIZED CHATTER train examples")
+        logging.info(f"{len(anonymized_chatter_dev_data)} ANONYMIZED CHATTER dev examples")
+        logging.info(f"{len(anonymized_chatter_test_data)} ANONYMIZED CHATTER test examples")
+        logging.info(f"{len(personet_train_data)} PERSONET train examples")
+        logging.info(f"{len(personet_dev_data)} PERSONET dev examples")
+        logging.info(f"{len(personet_test_data)} PERSONET test examples")
         logging.info("\n\n")
 
     # assign train data
     if FLAGS.train_dataset == "chatter":
-        train_data = chatter_train_data
+        if FLAGS.anonymize:
+            train_data = anonymized_chatter_train_data
+        else:
+            train_data = chatter_train_data
+        train_instr_seqlen = FLAGS.chatter_instr_seqlen
     else:
         train_data = personet_train_data
+        train_instr_seqlen = FLAGS.personet_instr_seqlen
 
     # print template
     if PARTIALSTATE.is_local_main_process:
@@ -345,51 +369,66 @@ def finetune(_):
     # create datasets
     log("creating datasets")
     random.shuffle(train_data)
-    train_dataset, _ = data_utils.create_dataset(tokenizer,
-                                                 train_data,
-                                                 FLAGS.instrtune,
-                                                 FLAGS.dataset_batch_size,
-                                                 FLAGS.max_seq_len,
-                                                 not PARTIALSTATE.is_local_main_process)
-    chatter_dev_dataset, chatter_dev_df = data_utils.create_dataset(tokenizer,
-                                                                    chatter_dev_data,
-                                                                    FLAGS.instrtune,
-                                                                    FLAGS.dataset_batch_size,
-                                                                    FLAGS.max_seq_len,
-                                                                    not PARTIALSTATE.is_local_main_process)
-    chatter_test_dataset, chatter_test_df = data_utils.create_dataset(tokenizer,
-                                                                      chatter_test_data,
-                                                                      FLAGS.instrtune,
-                                                                      FLAGS.dataset_batch_size,
-                                                                      FLAGS.max_seq_len,
-                                                                      not PARTIALSTATE.is_local_main_process)
-    personet_dev_dataset, personet_dev_df = data_utils.create_dataset(tokenizer,
-                                                                      personet_dev_data,
-                                                                      FLAGS.instrtune,
-                                                                      FLAGS.dataset_batch_size,
-                                                                      FLAGS.max_seq_len,
-                                                                      not PARTIALSTATE.is_local_main_process)
-    personet_test_dataset, personet_test_df = data_utils.create_dataset(tokenizer,
-                                                                        personet_test_data,
-                                                                        FLAGS.instrtune,
-                                                                        FLAGS.dataset_batch_size,
-                                                                        FLAGS.max_seq_len,
-                                                                        not PARTIALSTATE.is_local_main_process)
+    kwargs = dict(tokenizer=tokenizer,
+                  instrtune=FLAGS.instrtune,
+                  batch_size=FLAGS.dataset_batch_size,
+                  disable_progress_bar=not PARTIALSTATE.is_local_main_process)
+    train_dataset, _ = data_utils.create_dataset(data=train_data,
+                                                 name="train",
+                                                 instr_seqlen=train_instr_seqlen,
+                                                 **kwargs)
+    chatter_dev_dataset, chatter_dev_df = data_utils.create_dataset(data=chatter_dev_data,
+                                                                    name="chatter dev",
+                                                                    instr_seqlen=FLAGS.chatter_instr_seqlen,
+                                                                    **kwargs)
+    chatter_test_dataset, chatter_test_df = data_utils.create_dataset(data=chatter_test_data,
+                                                                      name="chatter test",
+                                                                      instr_seqlen=FLAGS.chatter_instr_seqlen,
+                                                                      **kwargs)
+    anonymized_chatter_dev_dataset, anonymized_chatter_dev_df = data_utils.create_dataset(
+        data=anonymized_chatter_dev_data,
+        name="anonymized chatter dev",
+        instr_seqlen=FLAGS.chatter_instr_seqlen,
+        **kwargs)
+    anonymized_chatter_test_dataset, anonymized_chatter_test_df = data_utils.create_dataset(
+        data=anonymized_chatter_test_data,
+        name="anonymized chatter test",
+        instr_seqlen=FLAGS.chatter_instr_seqlen,
+        **kwargs)
+    personet_dev_dataset, personet_dev_df = data_utils.create_dataset(data=personet_dev_data,
+                                                                      name="personet dev",
+                                                                      instr_seqlen=FLAGS.personet_instr_seqlen,
+                                                                      **kwargs)
+    personet_test_dataset, personet_test_df = data_utils.create_dataset(data=personet_test_data,
+                                                                        name="personet test",
+                                                                        instr_seqlen=FLAGS.personet_instr_seqlen,
+                                                                        **kwargs)
     train_ntokens = list(map(len, train_dataset["input_ids"]))
     chatter_dev_ntokens = list(map(len, chatter_dev_dataset["input_ids"]))
     chatter_test_ntokens = list(map(len, chatter_test_dataset["input_ids"]))
+    anonymized_chatter_dev_ntokens = list(map(len, anonymized_chatter_dev_dataset["input_ids"]))
+    anonymized_chatter_test_ntokens = list(map(len, anonymized_chatter_test_dataset["input_ids"]))
     personet_dev_ntokens = list(map(len, personet_dev_dataset["input_ids"]))
     personet_test_ntokens = list(map(len, personet_test_dataset["input_ids"]))
-    log(f"{FLAGS.train_dataset.upper()} train tokens/sample: max = {max(train_ntokens)}, min = {min(train_ntokens)}, "
-        f"95%tile = {np.quantile(train_ntokens, 0.95):.1f}")
-    log(f"CHATTER dev tokens/sample: max = {max(chatter_dev_ntokens)}, min = {min(chatter_dev_ntokens)}, "
-        f"95%tile = {np.quantile(chatter_dev_ntokens, 0.95):.1f}")
-    log(f"CHATTER test tokens/sample: max = {max(chatter_test_ntokens)}, min = {min(chatter_test_ntokens)}, "
-        f"95%tile = {np.quantile(chatter_test_ntokens, 0.95):.1f}")
-    log(f"PERSONET dev tokens/sample: max = {max(personet_dev_ntokens)}, min = {min(personet_dev_ntokens)}, "
-        f"95%tile = {np.quantile(personet_dev_ntokens, 0.95):.1f}")
-    log(f"PERSONET test tokens/sample: max = {max(personet_test_ntokens)}, min = {min(personet_test_ntokens)}, "
-        f"95%tile = {np.quantile(personet_test_ntokens, 0.95):.1f}")
+    if PARTIALSTATE.is_local_main_process:
+        logging.info("\ntokens/sample:")
+        logging.info(f"{FLAGS.train_dataset.upper()} train: max = {max(train_ntokens)}, min = {min(train_ntokens)}, "
+                     f"95%tile = {np.quantile(train_ntokens, 0.95):.1f}")
+        logging.info(f"CHATTER dev: max = {max(chatter_dev_ntokens)}, min = {min(chatter_dev_ntokens)}, "
+                     f"95%tile = {np.quantile(chatter_dev_ntokens, 0.95):.1f}")
+        logging.info(f"CHATTER test: max = {max(chatter_test_ntokens)}, min = {min(chatter_test_ntokens)}, "
+                     f"95%tile = {np.quantile(chatter_test_ntokens, 0.95):.1f}")
+        logging.info(f"ANONYMIZED CHATTER dev: max = {max(anonymized_chatter_dev_ntokens)}, "
+                     f"min = {min(anonymized_chatter_dev_ntokens)}, "
+                     f"95%tile = {np.quantile(anonymized_chatter_dev_ntokens, 0.95):.1f}")
+        logging.info(f"ANONYMIZED CHATTER test: max = {max(anonymized_chatter_test_ntokens)}, "
+                     f"min = {min(anonymized_chatter_test_ntokens)}, "
+                     f"95%tile = {np.quantile(anonymized_chatter_test_ntokens, 0.95):.1f}")
+        logging.info(f"PERSONET dev: max = {max(personet_dev_ntokens)}, min = {min(personet_dev_ntokens)}, "
+                     f"95%tile = {np.quantile(personet_dev_ntokens, 0.95):.1f}")
+        logging.info(f"PERSONET test: max = {max(personet_test_ntokens)}, min = {min(personet_test_ntokens)}, "
+                     f"95%tile = {np.quantile(personet_test_ntokens, 0.95):.1f}")
+        logging.info("\n\n")
 
     # create SFT config or Training Args
     kwargs = dict(output_dir=experiments_dir,
@@ -414,7 +453,7 @@ def finetune(_):
                   gradient_checkpointing_kwargs={"use_reentrant": False},
                   save_strategy="no")
     if FLAGS.instrtune:
-        config = SFTConfig(max_seq_length=FLAGS.max_seq_len,
+        config = SFTConfig(max_seq_length=train_instr_seqlen,
                            packing=False,
                            **kwargs)
     else:
@@ -464,54 +503,36 @@ def finetune(_):
     log("\n\n\n==========================================================================================")
     log("training done\n\n\n")
 
-    # predict and evaluate
-    log("evaluating CHATTER dev set")
-    dev_output = trainer.predict(chatter_dev_dataset)
-    log(f"{dev_output.metrics}\n\n")
-    dev_file = os.path.join(experiments_dir, "CHATTER_dev.csv")
-    dev_metrics_file = os.path.join(experiments_dir, "CHATTER_dev.json")
-    if PARTIALSTATE.is_local_main_process:
-        chatter_dev_df.to_csv(dev_file, index=False)
-        json.dump(dev_output.metrics, open(dev_metrics_file, "w"))
-
-    log("evaluating CHATTER test set")
-    compute_metrics.eval_df = chatter_test_df
-    test_output = trainer.predict(chatter_test_dataset)
-    log(f"{test_output.metrics}\n\n")
-    test_file = os.path.join(experiments_dir, "CHATTER_test.csv")
-    test_metrics_file = os.path.join(experiments_dir, "CHATTER_test.json")
-    if PARTIALSTATE.is_local_main_process:
-        chatter_test_df.to_csv(test_file, index=False)
-        json.dump(test_output.metrics, open(test_metrics_file, "w"))
-
-    compute_metrics.set_dataset("personet")
-    log("evaluating PERSONET dev set")
-    compute_metrics.eval_df = personet_dev_df
-    personet_output = trainer.predict(personet_dev_dataset)
-    log(f"{personet_output.metrics}\n\n")
-    personet_file = os.path.join(experiments_dir, "PERSONET_dev.csv")
-    personet_metrics_file = os.path.join(experiments_dir, "PERSONET_dev.json")
-    if PARTIALSTATE.is_local_main_process:
-        personet_dev_df.to_csv(personet_file, index=False)
-        json.dump(personet_output.metrics, open(personet_metrics_file, "w"))
-
-    log("evaluating PERSONET test set")
-    compute_metrics.eval_df = personet_test_df
-    personet_output = trainer.predict(personet_test_dataset)
-    log(f"{personet_output.metrics}\n\n")
-    personet_file = os.path.join(experiments_dir, "PERSONET_test.csv")
-    personet_metrics_file = os.path.join(experiments_dir, "PERSONET_test.json")
-    if PARTIALSTATE.is_local_main_process:
-        personet_test_df.to_csv(personet_file, index=False)
-        json.dump(personet_output.metrics, open(personet_metrics_file, "w"))
-
     # plot train loss, dev loss, and dev metric
-    log("plotting")
+    log("plotting\n\n")
     if PARTIALSTATE.is_local_main_process:
         with jsonlines.open(logs_file) as reader:
             logs = list(reader)
-        plots_file = os.path.join(experiments_dir, "plot.png")
-        plot_logs(logs, plots_file)
+        metric = "eval_accuracy" if FLAGS.train_dataset == "chatter" else "eval_accuracy@1"
+        plot_logs(logs, metric, experiments_dir)
+
+    # predict and evaluate
+    test_datasets = [chatter_dev_dataset, chatter_test_dataset, anonymized_chatter_dev_dataset,
+                     anonymized_chatter_test_dataset, personet_dev_dataset, personet_test_dataset]
+    test_dfs = [chatter_dev_df, chatter_test_df, anonymized_chatter_dev_df, anonymized_chatter_test_df,
+                personet_dev_df, personet_test_df]
+    test_names = ["CHATTER dev", "CHATTER test", "ANONYMIZED CHATTER dev", "ANONYMIZED CHATTER test",
+                  "PERSONET dev", "PERSONET test"]
+    for test_dataset, test_df, test_name in zip(test_datasets, test_dfs, test_names):
+        log(f"evaluating {test_name}")
+        if "CHATTER" in test_name:
+            compute_metrics.set_dataset("chatter")
+        else:
+            compute_metrics.set_dataset("personet")
+        compute_metrics.eval_df = test_df
+        test_output = trainer.predict(test_dataset)
+        log(f"{test_output.metrics}\n\n")
+        test_filename = test_name.replace(" ", "_")
+        test_predictions_file = os.path.join(experiments_dir, test_filename + ".csv")
+        test_metrics_file = os.path.join(experiments_dir, test_filename + ".json")
+        if PARTIALSTATE.is_local_main_process:
+            test_df.to_csv(test_predictions_file, index=False)
+            json.dump(test_output.metrics, open(test_metrics_file, "w"))
 
     PARTIALSTATE.wait_for_everyone()
     # save model
