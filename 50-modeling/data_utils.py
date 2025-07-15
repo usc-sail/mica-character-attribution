@@ -194,11 +194,12 @@ def load_story2personality():
                                        "partition": "test"})
     return processed_data
 
-def create_dataset(tokenizer: AutoTokenizer,
-                   data: List[Dict[str, Union[str, int]]],
+def create_dataset(data: List[Dict[str, Union[str, int]]],
+                   tokenizer: AutoTokenizer,
+                   name = "",
                    instrtune = False,
                    batch_size = 256,
-                   instr_max_seqlen = 1024,
+                   instr_seqlen = 1024,
                    disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
     """Create Dataset object and evaluation dataframe from data array"""
     texts = []
@@ -220,7 +221,7 @@ def create_dataset(tokenizer: AutoTokenizer,
     df = pd.DataFrame(rows, columns=["key", "attribute", "label"])
     input_ids, attention_mask = [], []
     n_batches = int(np.ceil(len(texts)/batch_size))
-    for i in tqdm.trange(n_batches, desc="tokenization", disable=disable_progress_bar):
+    for i in tqdm.trange(n_batches, desc=f"{name} tokenization", disable=disable_progress_bar):
         batch_texts = texts[batch_size * i: batch_size * (i + 1)]
         encoding = tokenizer(batch_texts,
                              padding=False,
@@ -240,13 +241,13 @@ def create_dataset(tokenizer: AutoTokenizer,
         is_last_token_sp = yes_answer_sp_mask[-1] == 1
         yes_answer_size = len(yes_answer_sp_mask) - is_first_token_sp - is_last_token_sp
         no_answer_size = len(no_answer_sp_mask) - is_first_token_sp - is_last_token_sp
-        for i in tqdm.trange(len(input_ids), desc="truncation", disable=disable_progress_bar):
-            if len(input_ids[i]) > instr_max_seqlen:
+        for i in tqdm.trange(len(input_ids), desc=f"{name} truncation", disable=disable_progress_bar):
+            if len(input_ids[i]) > instr_seqlen:
                 if data[i]["label"] == 1:
-                    start = -is_last_token_sp - yes_answer_size - (len(input_ids[i]) - instr_max_seqlen)
+                    start = -is_last_token_sp - yes_answer_size - (len(input_ids[i]) - instr_seqlen)
                     end = -is_last_token_sp - yes_answer_size
                 else:
-                    start = -is_last_token_sp - no_answer_size - (len(input_ids[i]) - instr_max_seqlen)
+                    start = -is_last_token_sp - no_answer_size - (len(input_ids[i]) - instr_seqlen)
                     end = -is_last_token_sp - no_answer_size
                 input_ids[i] = input_ids[i][:start] + input_ids[i][end:]
                 attention_mask[i] = attention_mask[i][:start] + attention_mask[i][end:]
