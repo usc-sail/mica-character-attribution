@@ -36,6 +36,7 @@ ANSWER_TEMPLATE = " \n\n ANSWER:"
 CHARACTER_TOKEN = "[CHARACTER]"
 ATTRIBUTE_TOKEN = "[ATTRIBUTE]"
 CONTEXT_TOKEN = "[CONTEXT]"
+NCLASSES = 5
 
 def load_extracts(extracts_file, anonymize=False):
     """Load extracts data"""
@@ -53,7 +54,7 @@ def load_extracts(extracts_file, anonymize=False):
                                "partition": obj["partition"]})
     return processed_data
 
-def load_contexts(contexts_file, anonymize=False):
+def load_contexts(contexts_file, anonymize=False, multiclass=False):
     """Load contexts data"""
     with jsonlines.open(contexts_file) as reader:
         data = list(reader)
@@ -69,7 +70,7 @@ def load_contexts(contexts_file, anonymize=False):
                                    "label": obj["label"],
                                    "partition": obj["partition"]})
     else:
-        label_file = os.path.join(DATADIR, "CHATTER/chatter.csv")
+        label_file = os.path.join(DATADIR, "CHATTER", "chatter-multiclass.csv" if multiclass else "chatter.csv")
         tropes_file = os.path.join(DATADIR, "CHATTER/tropes.csv")
         label_df = pd.read_csv(label_file, index_col=None)
         tropes_df = pd.read_csv(tropes_file, index_col=None)
@@ -81,23 +82,39 @@ def load_contexts(contexts_file, anonymize=False):
         for _, row in tropes_df.iterrows():
             trope_to_definition[row["trope"]] = row["summary"]
         for _, row in label_df[label_df["partition"].notna()].iterrows():
-            characterid, trope, partition = row["character"], row["trope"], row["partition"]
-            definition = trope_to_definition[trope]
-            label = row["label"] if partition == "test" else row["tvtrope-label"]
-            label = int(label)
-            for i in characterid_to_ixs[characterid]:
-                obj = data[i]
-                processed_data.append({"key": f"{characterid}-{trope}",
-                                       "docid": obj["imdbid"],
-                                       "character": "CHARACTER" + obj["character"][1:] if anonymize else obj["name"],
-                                       "attribute-name": trope,
-                                       "attribute-definition": definition,
-                                       "text": obj["text"],
-                                       "label": label,
-                                       "partition": partition})
+            if multiclass:
+                characterid, partition, label = row["character"], row["partition"], int(row["label"]) - 1
+                tropes = [row[f"trope{i}"] for i in range(1, NCLASSES + 1)]
+                definitions = [trope_to_definition[trope] for trope in tropes]
+                portrayed_trope = tropes[label]
+                for i in characterid_to_ixs[characterid]:
+                    obj = data[i]
+                    processed_data.append({"key": f"{characterid}-{portrayed_trope}",
+                                           "docid": obj["imdbid"],
+                                           "character": "CHARACTER"+obj["character"][1:] if anonymize else obj["name"],
+                                           "attribute-names": tropes,
+                                           "attribute-definitions": definitions,
+                                           "text": obj["text"],
+                                           "label": label,
+                                           "partition": partition})
+            else:
+                characterid, trope, partition = row["character"], row["trope"], row["partition"]
+                definition = trope_to_definition[trope]
+                label = row["label"] if partition == "test" else row["tvtrope-label"]
+                label = int(label)
+                for i in characterid_to_ixs[characterid]:
+                    obj = data[i]
+                    processed_data.append({"key": f"{characterid}-{trope}",
+                                           "docid": obj["imdbid"],
+                                           "character": "CHARACTER"+obj["character"][1:] if anonymize else obj["name"],
+                                           "attribute-name": trope,
+                                           "attribute-definition": definition,
+                                           "text": obj["text"],
+                                           "label": label,
+                                           "partition": partition})
     return processed_data
 
-def load_personet():
+def load_personet(multiclass=False):
     """Load personet data"""
     personet_dir = os.path.join(DATADIR, "PERSONET")
     with jsonlines.open(os.path.join(personet_dir, "test.jsonl")) as reader:
@@ -125,23 +142,29 @@ def load_personet():
                          "character": obj["character"],
                          "text": text,
                          "partition": obj["partition"]}
-        if obj["partition"] in ["test", "dev"]:
-            for i, trait in enumerate(traits):
-                processed_data.append({**processed_obj,
-                                       "attribute-name": trait,
-                                       "attribute-definition": trait,
-                                       "label": int(answer == i)})
+        if multiclass:
+            processed_data.append({**processed_obj,
+                                   "attribute-names": traits,
+                                   "attribute-definitions": traits,
+                                   "label": answer})
         else:
-            wrong_answer = random.choice([i for i in range(len(traits)) if i != answer])
-            positive_processed_obj = {**processed_obj,
-                                      "attribute-name": traits[answer],
-                                      "attribute-definition": traits[answer],
-                                      "label": 1}
-            negative_processed_obj = {**processed_obj,
-                                      "attribute-name": traits[wrong_answer],
-                                      "attribute-definition": traits[wrong_answer],
-                                      "label": 0}
-            processed_data.extend([positive_processed_obj, negative_processed_obj])
+            if obj["partition"] in ["test", "dev"]:
+                for i, trait in enumerate(traits):
+                    processed_data.append({**processed_obj,
+                                           "attribute-name": trait,
+                                           "attribute-definition": trait,
+                                           "label": int(answer == i)})
+            else:
+                wrong_answer = random.choice([i for i in range(len(traits)) if i != answer])
+                positive_processed_obj = {**processed_obj,
+                                           "attribute-name": traits[answer],
+                                           "attribute-definition": traits[answer],
+                                           "label": 1}
+                negative_processed_obj = {**processed_obj,
+                                           "attribute-name": traits[wrong_answer],
+                                           "attribute-definition": traits[wrong_answer],
+                                           "label": 0}
+                processed_data.extend([positive_processed_obj, negative_processed_obj])
     return processed_data
 
 def load_story2personality():
@@ -198,6 +221,7 @@ def create_dataset(data: List[Dict[str, Union[str, int]]],
                    tokenizer: AutoTokenizer,
                    name = "",
                    instrtune = False,
+                   multiclass = False,
                    batch_size = 256,
                    instr_seqlen = 1024,
                    disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
@@ -213,9 +237,16 @@ def create_dataset(data: List[Dict[str, Union[str, int]]],
                     .replace("$STORY$", obj["text"])
                     )
         else:
-            text = (f"{ATTRIBUTE_TOKEN}{obj['attribute-definition']}{CHARACTER_TOKEN}{obj['character']}{CONTEXT_TOKEN}"
-                    f"{obj['text']}")
-        row = [obj["key"], obj["attribute-name"], obj["label"]]
+            if multiclass:
+                text = ("".join([f"{ATTRIBUTE_TOKEN}{obj['attribute-definitions'][i]}" for i in range(NCLASSES)])
+                        + f"{CHARACTER_TOKEN}{obj['character']}{CONTEXT_TOKEN}{obj['text']}")
+            else:
+                text = (f"{ATTRIBUTE_TOKEN}{obj['attribute-definition']}{CHARACTER_TOKEN}{obj['character']}"
+                        f"{CONTEXT_TOKEN}{obj['text']}")
+        if multiclass:
+            row = [obj["key"], obj["attribute-names"][obj["label"]], obj["label"]]
+        else:
+            row = [obj["key"], obj["attribute-name"], obj["label"]]
         rows.append(row)
         texts.append(text)
     df = pd.DataFrame(rows, columns=["key", "attribute", "label"])

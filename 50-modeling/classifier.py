@@ -1,49 +1,43 @@
 # Classification model for the character attribution task
-from accelerate import PartialState
+import data_utils
+
+import torch
 from torch import nn
-from transformers import AutoModel, AutoModelForSequenceClassification
+from transformers import AutoModel, AutoModelForSequenceClassification, modeling_outputs
 
-PARTIALSTATE = PartialState()
-
-class BinaryClassifier(nn.Module):
+class BinaryClassifier(AutoModelForSequenceClassification):
     """Takes input as '[ATTRIBUTE] <Attribute> [CHARACTER] <Character> [CONTEXT] <Context>', applies a sequence
     classification model, polls the CLS representation, and feeds it to FFN"""
 
-    def __init__(self, modelname, compute_dtype, quantization_config, attn, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.encoder =  AutoModelForSequenceClassification.from_pretrained(modelname,
-                                                                           num_labels=2,
-                                                                           torch_dtype=compute_dtype,
-                                                                           quantization_config=quantization_config,
-                                                                           device_map={"": PARTIALSTATE.process_index},
-                                                                           attn_implementation=attn)
-        self.encoder.config.pad_token_id = self.encoder.config.eos_token_id
 
-    def forward(self, batch):
-        return self.encoder(**batch)
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
 
-class BinarySiameseClassifier(nn.Module):
+class BinarySiameseClassifier(AutoModel):
     """Takes as input '[CHARACTER] <Character> [CONTEXT] <Context>' and attribute definitions, apply a language
     model to get character and attribute representations, apply a siamese network to get distance, use cross-entropy or ranking loss"""
 
-class MulticlassClassifier(nn.Module):
+class MulticlassClassifier(AutoModel):
     """Takes as input '[ATTRIBUTE_1] <Attribute_1> [ATTRIBUTE_2] <Attribute_2> ... [ATTRIBUTE_m] <Attribute_m>
     [CHARACTER] <Character> [CONTEXT] <Context>', applies a language model, polls the representations corresponding
     to the [ATTRIBUTE_n] tokens, and feed it to FFN"""
 
-    def __init__(self, modelname, compute_dtype, quantization_config, attn, n_classes, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.encoder = AutoModel.from_pretrained(modelname,
-                                                 torch_dtype=compute_dtype,
-                                                 quantization_config=quantization_config,
-                                                 device_map={"": PARTIALSTATE.process_index},
-                                                 attn_implementation=attn)
-        self.score = nn.Linear(self.encoder.config.hidden_size, n_classes)
+        self.score = nn.Linear(self.config.hidden_size, 1, device=next(super().parameters()).device)
+        self.attribute_token_id = None
 
-    def forward(self, batch):
-        out = self.encoder(**batch)
+    def forward(self, input_ids=None, labels=None, *args, **kwargs):
+        out = super().forward(*args, **kwargs)
+        attribute = out.last_hidden_state[input_ids == self.attribute_token_id].reshape(
+            -1, data_utils.NCLASSES, self.config.hidden_size)
+        score = self.score(attribute).squeeze()
+        loss = nn.functional.cross_entropy(score, labels)
+        return modeling_outputs.SequenceClassifierOutput(loss=loss, logits=score)
 
-class MulticlassSiameseClassifier(nn.Module):
+class MulticlassSiameseClassifier(AutoModel):
     """Takes as input '[CHARACTER] <Character> [CONTEXT] <Context>' and attribute definitions, applies a language 
     model to get character representation and attribute representations, apply a siamese network to get distances
     between character and attribute representation, use cross-entropy or ranking loss"""

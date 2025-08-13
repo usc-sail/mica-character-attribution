@@ -1,4 +1,5 @@
 """Instruction Fine-tune LLMs on the character attribution classification task"""
+import classifier
 import data_utils
 import eval_utils
 
@@ -28,6 +29,7 @@ flags.DEFINE_string("extracts_file", default=None, help="extracts data file")
 flags.DEFINE_bool("anonymize", default=False, help="use anonymized contexts or extracts for training")
 flags.DEFINE_string("model", default="meta-llama/Llama-3.1-8B-Instruct", help="huggingface model name")
 flags.DEFINE_bool("instrtune", default=False, help="do instruction tuning instead of classification")
+flags.DEFINE_bool("multiclass", default=False, help="do multiclass modeling")
 flags.DEFINE_bool("bf16", default=False, help="use brain floating point (default=fp16)")
 flags.DEFINE_bool("load_4bit", default=False, help="do 4-bit QLoRA training")
 flags.DEFINE_bool("load_8bit", default=False, help="do 8-bit QLoRA training")
@@ -158,6 +160,8 @@ def finetune(_):
     """Instruction finetune or train binary classification LLMs on the character attribution classification task"""
     # decide experiments directory
     method_dir = "instruction" if FLAGS.instrtune else "classification"
+    if FLAGS.multiclass:
+        method_dir += "-multiclass"
     if FLAGS.train_dataset == "chatter":
         if FLAGS.contexts_file is not None:
             input_dir = FLAGS.contexts_file[:-6]
@@ -206,6 +210,8 @@ def finetune(_):
             logging.info(f"{'extracts-file':30s} = {FLAGS.extracts_file}")
         logging.info(f"{'anonymize':30s} = {FLAGS.anonymize}")
         method = "instruction-tuning" if FLAGS.instrtune else "classification"
+        if FLAGS.multiclass:
+            method += "-multiclass"
         logging.info(f"{'method':30s} = {method}")
         logging.info(f"{'model':30s} = {FLAGS.model}")
         precision = "bf16" if FLAGS.bf16 else "fp16"
@@ -242,8 +248,10 @@ def finetune(_):
         anonymized_contexts_file = os.path.join(data_utils.DATADIR,
                                                 "50-modeling/anonymized-contexts",
                                                 FLAGS.contexts_file)
-        chatter_data = data_utils.load_contexts(contexts_file)
-        anonymized_chatter_data = data_utils.load_contexts(anonymized_contexts_file, anonymize=True)
+        chatter_data = data_utils.load_contexts(contexts_file, multiclass=FLAGS.multiclass)
+        anonymized_chatter_data = data_utils.load_contexts(anonymized_contexts_file,
+                                                           anonymize=True,
+                                                           multiclass=FLAGS.multiclass)
     else:
         extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
         anonymized_extracts_file = os.path.join(data_utils.DATADIR,
@@ -317,7 +325,14 @@ def finetune(_):
         quantization_config = None
 
     # instantiate LoRA config
-    lora_config = LoraConfig(task_type=TaskType.CAUSAL_LM if FLAGS.instrtune else TaskType.SEQ_CLS,
+    if FLAGS.instrtune:
+        task_type = TaskType.CAUSAL_LM
+    else:
+        if FLAGS.multiclass:
+            task_type = TaskType.FEATURE_EXTRACTION
+        else:
+            task_type = TaskType.SEQ_CLS
+    lora_config = LoraConfig(task_type=task_type,
                              target_modules=FLAGS.lora_target_module,
                              modules_to_save=["embed_tokens", "lm_head", "score"],
                              r=FLAGS.rank,
@@ -335,12 +350,19 @@ def finetune(_):
                                                      device_map={"": PARTIALSTATE.process_index},
                                                      attn_implementation=FLAGS.attn)
     else:
-        model = AutoModelForSequenceClassification.from_pretrained(FLAGS.model,
-                                                                   num_labels=2,
-                                                                   torch_dtype=compute_dtype,
-                                                                   quantization_config=quantization_config,
-                                                                   device_map={"": PARTIALSTATE.process_index},
-                                                                   attn_implementation=FLAGS.attn)
+        if FLAGS.multiclass:
+            model = classifier.MulticlassClassifier.from_pretrained(FLAGS.model,
+                                                                    torch_dtype=compute_dtype,
+                                                                    quantization_config=quantization_config,
+                                                                    device_map={"": PARTIALSTATE.process_index},
+                                                                    attn_implementation=FLAGS.attn)
+        else:
+            model = classifier.BinaryClassifier.from_pretrained(FLAGS.model,
+                                                                num_labels=2,
+                                                                torch_dtype=compute_dtype,
+                                                                quantization_config=quantization_config,
+                                                                device_map={"": PARTIALSTATE.process_index},
+                                                                attn_implementation=FLAGS.attn)
         if model.config.pad_token_id is None:
             model.config.pad_token_id = model.config.eos_token_id
 
@@ -358,6 +380,8 @@ def finetune(_):
                                                                     data_utils.CONTEXT_TOKEN]},
                                      replace_additional_special_tokens=False)
         model.resize_token_embeddings(len(tokenizer.vocab))
+        if FLAGS.multiclass:
+            model.attribute_token_id = tokenizer.vocab[data_utils.ATTRIBUTE_TOKEN]
 
         # create LoRA model (only done for classification method)
         model = prepare_model_for_kbit_training(model)
@@ -371,6 +395,7 @@ def finetune(_):
     random.shuffle(train_data)
     kwargs = dict(tokenizer=tokenizer,
                   instrtune=FLAGS.instrtune,
+                  multiclass=FLAGS.multiclass,
                   batch_size=FLAGS.dataset_batch_size,
                   disable_progress_bar=not PARTIALSTATE.is_local_main_process)
     train_dataset, _ = data_utils.create_dataset(data=train_data,
