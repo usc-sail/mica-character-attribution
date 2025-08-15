@@ -486,6 +486,7 @@ def finetune(_):
 
     # create compute metrics instance
     compute_metrics = eval_utils.ComputeMetrics(tokenizer)
+    compute_metrics.multiclass = FLAGS.multiclass
     if FLAGS.train_dataset == "chatter":
         compute_metrics.eval_df = chatter_dev_df
         compute_metrics.set_dataset("chatter")

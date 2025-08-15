@@ -12,6 +12,7 @@ class ComputeMetrics:
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.eval_df = None
+        self.multiclass = False
         self._dataset = "chatter"
 
     def set_dataset(self, dataset):
@@ -22,33 +23,52 @@ class ComputeMetrics:
     def _compute_metrics(self) -> Dict[str, float]:
         """Compute metrics for different datasets"""
         if self._dataset == "chatter":
-            true_arr, pred_arr, prob_arr = [], [], []
-            for _, sample_df in self.eval_df.groupby("key"):
-                nonnan_sample_df = sample_df.dropna(subset="pred")
-                if len(nonnan_sample_df) > 0:
-                    true = nonnan_sample_df["label"].values[0]
-                    if any(nonnan_sample_df["pred"] == 1):
-                        pred = 1
-                        prob = max(nonnan_sample_df[nonnan_sample_df["pred"] == 1]["prob"].tolist())
-                    else:
-                        pred = 0
-                        prob = max(nonnan_sample_df[nonnan_sample_df["pred"] == 0]["prob"].tolist())
-                    true_arr.append(true)
-                    pred_arr.append(pred)
-                    prob_arr.append(prob)
-            if len(true_arr) > 0:
-                acc = accuracy_score(true_arr, pred_arr)
-                auc = roc_auc_score(true_arr, prob_arr)
-                prec, rec, f1, _ = precision_recall_fscore_support(true_arr, pred_arr, average="binary")
+            if self.multiclass:
+                n1, n2, n3 = 0
+                prob_columns = [col for col in self.eval_df.columns if col.startswith("prob")]
+                for _, sample_df in self.eval_df.groupby("key"):
+                    label = sample_df["label"].values[0]
+                    ranks = (-sample_df[prob_columns].values).argsort(axis=1)
+                    i = min((ranks == label).nonzero()[1])
+                    if i < 1:
+                        n1 += 1
+                    if i < 2:
+                        n2 += 1
+                    if i < 3:
+                        n3 += 1
+                n = len(self.eval_df["key"].unique())
+                acc1 = n1/n
+                acc2 = n2/n
+                acc3 = n3/n
+                metrics = {"accuracy@1": acc1, "accuracy@2": acc2, "accuracy@3": acc3}
             else:
-                acc, auc, prec, rec, f1 = np.nan, np.nan, np.nan, np.nan, np.nan
-            metrics = {"accuracy": acc,
-                       "precision": prec,
-                       "recall": rec,
-                       "f1": f1,
-                       "auc": auc,
-                       "total_nsamples": len(self.eval_df["key"].unique()),
-                       "eval_nsamples": len(true_arr)}
+                true_arr, pred_arr, prob_arr = [], [], []
+                for _, sample_df in self.eval_df.groupby("key"):
+                    nonnan_sample_df = sample_df.dropna(subset="pred")
+                    if len(nonnan_sample_df) > 0:
+                        true = nonnan_sample_df["label"].values[0]
+                        if any(nonnan_sample_df["pred"] == 1):
+                            pred = 1
+                            prob = max(nonnan_sample_df[nonnan_sample_df["pred"] == 1]["prob"].tolist())
+                        else:
+                            pred = 0
+                            prob = max(nonnan_sample_df[nonnan_sample_df["pred"] == 0]["prob"].tolist())
+                        true_arr.append(true)
+                        pred_arr.append(pred)
+                        prob_arr.append(prob)
+                if len(true_arr) > 0:
+                    acc = accuracy_score(true_arr, pred_arr)
+                    auc = roc_auc_score(true_arr, prob_arr)
+                    prec, rec, f1, _ = precision_recall_fscore_support(true_arr, pred_arr, average="binary")
+                else:
+                    acc, auc, prec, rec, f1 = np.nan, np.nan, np.nan, np.nan, np.nan
+                metrics = {"accuracy": acc,
+                           "precision": prec,
+                           "recall": rec,
+                           "f1": f1,
+                           "auc": auc,
+                           "total_nsamples": len(self.eval_df["key"].unique()),
+                           "eval_nsamples": len(true_arr)}
         elif self._dataset == "personet":
             n1, n2, n3 = 0, 0, 0
             for _, sample_df in self.eval_df.groupby("key"):
@@ -56,11 +76,12 @@ class ComputeMetrics:
                 if len(pos_sample_df) > 0 and (pos_sample_df["label"] == 1).any():
                     i = pos_sample_df["label"].values.nonzero()[0].item()
                     rank = (-pos_sample_df["prob"].values).argsort()
-                    if rank[i] < 1:
+                    i = (rank == i).nonzero()[0].item()
+                    if i < 1:
                         n1 += 1
-                    if rank[i] < 2:
+                    if i < 2:
                         n2 += 1
-                    if rank[i] < 3:
+                    if i < 3:
                         n3 += 1
             n = len(self.eval_df["key"].unique())
             acc1 = n1/n
@@ -120,6 +141,12 @@ class ComputeMetrics:
         """Compute metrics for the classification method"""
         logits = evalprediction.predictions
         probs = scipy.special.softmax(logits, axis=-1)
-        self.eval_df["pred"] = np.argmax(probs, axis=-1)
-        self.eval_df["prob"] = np.max(probs, axis=-1)
+        if self.multiclass:
+            self.eval_df["pred"] = np.argmax(probs, axis=-1)
+            self.eval_df = pd.concat((self.eval_df,
+                                      pd.DataFrame(probs, columns=[f"prob{i + 1}" for i in range(probs.shape[1])])),
+                                      axis=1)
+        else:
+            self.eval_df["pred"] = np.argmax(probs, axis=-1)
+            self.eval_df["prob"] = np.max(probs, axis=-1)
         return self._compute_metrics()
