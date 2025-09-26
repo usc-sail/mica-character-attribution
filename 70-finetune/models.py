@@ -1,7 +1,6 @@
 # Classification model for the character attribution task
-import data_utils
+import data
 
-import torch
 from torch import nn
 from transformers import AutoModel, AutoModelForSequenceClassification, modeling_outputs
 
@@ -32,7 +31,7 @@ class MulticlassClassifier(AutoModel):
     def forward(self, input_ids=None, labels=None, *args, **kwargs):
         out = super().forward(*args, **kwargs)
         attribute = out.last_hidden_state[input_ids == self.attribute_token_id].reshape(
-            -1, data_utils.NCLASSES, self.config.hidden_size)
+            -1, data.NCLASSES, self.config.hidden_size)
         score = self.score(attribute).squeeze()
         loss = nn.functional.cross_entropy(score, labels)
         return modeling_outputs.SequenceClassifierOutput(loss=loss, logits=score)

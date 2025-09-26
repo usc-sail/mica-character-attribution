@@ -1,7 +1,7 @@
 """Instruction Fine-tune LLMs on the character attribution classification task"""
-import classifier
-import data_utils
-import eval_utils
+import models
+import data
+import evaluate
 
 from absl import app
 from absl import flags
@@ -181,7 +181,7 @@ def finetune(_):
     else:
         model_dir += "-fp16"
     datetime_dir = datetime.strftime(datetime.now(), "%Y%b%d-%H%M%S")
-    experiments_dir = os.path.join(data_utils.DATADIR,
+    experiments_dir = os.path.join(data.DATADIR,
                                    "50-modeling/finetune",
                                    method_dir,
                                    input_dir,
@@ -244,23 +244,23 @@ def finetune(_):
     # read data
     log("reading chatter data")
     if FLAGS.contexts_file is not None:
-        contexts_file = os.path.join(data_utils.DATADIR, "50-modeling/contexts", FLAGS.contexts_file)
-        anonymized_contexts_file = os.path.join(data_utils.DATADIR,
+        contexts_file = os.path.join(data.DATADIR, "50-modeling/contexts", FLAGS.contexts_file)
+        anonymized_contexts_file = os.path.join(data.DATADIR,
                                                 "50-modeling/anonymized-contexts",
                                                 FLAGS.contexts_file)
-        chatter_data = data_utils.load_contexts(contexts_file, multiclass=FLAGS.multiclass)
-        anonymized_chatter_data = data_utils.load_contexts(anonymized_contexts_file,
+        chatter_data = data.load_contexts(contexts_file, multiclass=FLAGS.multiclass)
+        anonymized_chatter_data = data.load_contexts(anonymized_contexts_file,
                                                            anonymize=True,
                                                            multiclass=FLAGS.multiclass)
     else:
-        extracts_file = os.path.join(data_utils.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
-        anonymized_extracts_file = os.path.join(data_utils.DATADIR,
+        extracts_file = os.path.join(data.DATADIR, "50-modeling/extracts", FLAGS.extracts_file)
+        anonymized_extracts_file = os.path.join(data.DATADIR,
                                                 "50-modeling/anonymized-extracts",
                                                 FLAGS.extracts_file)
-        chatter_data = data_utils.load_extracts(extracts_file)
-        anonymized_chatter_data = data_utils.load_extracts(anonymized_extracts_file, anonymize=True)
+        chatter_data = data.load_extracts(extracts_file)
+        anonymized_chatter_data = data.load_extracts(anonymized_extracts_file, anonymize=True)
     log("reading personet data")
-    personet_data = data_utils.load_personet()
+    personet_data = data.load_personet()
     chatter_train_data = list(filter(lambda obj: obj["partition"] == "train", chatter_data))
     chatter_dev_data = list(filter(lambda obj: obj["partition"] == "dev", chatter_data))
     chatter_test_data = list(filter(lambda obj: obj["partition"] == "test", chatter_data))
@@ -298,17 +298,17 @@ def finetune(_):
         if FLAGS.instrtune:
             logging.info("TEMPLATE")
             logging.info("============================================================================================")
-            logging.info(f"\"{data_utils.TEMPLATE}\"")
+            logging.info(f"\"{data.TEMPLATE}\"")
             logging.info("============================================================================================")
             logging.info("\n")
             logging.info("ANSWER TEMPLATE")
             logging.info("============================================================================================")
-            logging.info(f"\"{data_utils.ANSWER_TEMPLATE}\"")
+            logging.info(f"\"{data.ANSWER_TEMPLATE}\"")
             logging.info("============================================================================================")
         else:
-            logging.info(f"CHARACTER TOKEN = {data_utils.CHARACTER_TOKEN}")
-            logging.info(f"ATTRIBUTE TOKEN = {data_utils.ATTRIBUTE_TOKEN}")
-            logging.info(f"CONTEXT TOKEN   = {data_utils.CONTEXT_TOKEN}")
+            logging.info(f"CHARACTER TOKEN = {data.CHARACTER_TOKEN}")
+            logging.info(f"ATTRIBUTE TOKEN = {data.ATTRIBUTE_TOKEN}")
+            logging.info(f"CONTEXT TOKEN   = {data.CONTEXT_TOKEN}")
         logging.info("\n\n")
 
     # instantiate quantization config
@@ -351,13 +351,13 @@ def finetune(_):
                                                      attn_implementation=FLAGS.attn)
     else:
         if FLAGS.multiclass:
-            model = classifier.MulticlassClassifier.from_pretrained(FLAGS.model,
+            model = models.MulticlassClassifier.from_pretrained(FLAGS.model,
                                                                     torch_dtype=compute_dtype,
                                                                     quantization_config=quantization_config,
                                                                     device_map={"": PARTIALSTATE.process_index},
                                                                     attn_implementation=FLAGS.attn)
         else:
-            model = classifier.BinaryClassifier.from_pretrained(FLAGS.model,
+            model = models.BinaryClassifier.from_pretrained(FLAGS.model,
                                                                 num_labels=2,
                                                                 torch_dtype=compute_dtype,
                                                                 quantization_config=quantization_config,
@@ -375,13 +375,13 @@ def finetune(_):
     # add special tokens (only done for classification method)
     if not FLAGS.instrtune:
         log("adding special tokens")
-        tokenizer.add_special_tokens({"additional_special_tokens": [data_utils.CHARACTER_TOKEN,
-                                                                    data_utils.ATTRIBUTE_TOKEN,
-                                                                    data_utils.CONTEXT_TOKEN]},
+        tokenizer.add_special_tokens({"additional_special_tokens": [data.CHARACTER_TOKEN,
+                                                                    data.ATTRIBUTE_TOKEN,
+                                                                    data.CONTEXT_TOKEN]},
                                      replace_additional_special_tokens=False)
         model.resize_token_embeddings(len(tokenizer.vocab))
         if FLAGS.multiclass:
-            model.attribute_token_id = tokenizer.vocab[data_utils.ATTRIBUTE_TOKEN]
+            model.attribute_token_id = tokenizer.vocab[data.ATTRIBUTE_TOKEN]
 
         # create LoRA model (only done for classification method)
         model = prepare_model_for_kbit_training(model)
@@ -398,33 +398,33 @@ def finetune(_):
                   multiclass=FLAGS.multiclass,
                   batch_size=FLAGS.dataset_batch_size,
                   disable_progress_bar=not PARTIALSTATE.is_local_main_process)
-    train_dataset, _ = data_utils.create_dataset(data=train_data,
+    train_dataset, _ = data.create_dataset(data=train_data,
                                                  name="train",
                                                  instr_seqlen=train_instr_seqlen,
                                                  **kwargs)
-    chatter_dev_dataset, chatter_dev_df = data_utils.create_dataset(data=chatter_dev_data,
+    chatter_dev_dataset, chatter_dev_df = data.create_dataset(data=chatter_dev_data,
                                                                     name="chatter dev",
                                                                     instr_seqlen=FLAGS.chatter_instr_seqlen,
                                                                     **kwargs)
-    chatter_test_dataset, chatter_test_df = data_utils.create_dataset(data=chatter_test_data,
+    chatter_test_dataset, chatter_test_df = data.create_dataset(data=chatter_test_data,
                                                                       name="chatter test",
                                                                       instr_seqlen=FLAGS.chatter_instr_seqlen,
                                                                       **kwargs)
-    anonymized_chatter_dev_dataset, anonymized_chatter_dev_df = data_utils.create_dataset(
+    anonymized_chatter_dev_dataset, anonymized_chatter_dev_df = data.create_dataset(
         data=anonymized_chatter_dev_data,
         name="anonymized chatter dev",
         instr_seqlen=FLAGS.chatter_instr_seqlen,
         **kwargs)
-    anonymized_chatter_test_dataset, anonymized_chatter_test_df = data_utils.create_dataset(
+    anonymized_chatter_test_dataset, anonymized_chatter_test_df = data.create_dataset(
         data=anonymized_chatter_test_data,
         name="anonymized chatter test",
         instr_seqlen=FLAGS.chatter_instr_seqlen,
         **kwargs)
-    personet_dev_dataset, personet_dev_df = data_utils.create_dataset(data=personet_dev_data,
+    personet_dev_dataset, personet_dev_df = data.create_dataset(data=personet_dev_data,
                                                                       name="personet dev",
                                                                       instr_seqlen=FLAGS.personet_instr_seqlen,
                                                                       **kwargs)
-    personet_test_dataset, personet_test_df = data_utils.create_dataset(data=personet_test_data,
+    personet_test_dataset, personet_test_df = data.create_dataset(data=personet_test_data,
                                                                         name="personet test",
                                                                         instr_seqlen=FLAGS.personet_instr_seqlen,
                                                                         **kwargs)
@@ -485,7 +485,7 @@ def finetune(_):
         config = TrainingArguments(**kwargs)
 
     # create compute metrics instance
-    compute_metrics = eval_utils.ComputeMetrics(tokenizer)
+    compute_metrics = evaluate.ComputeMetrics(tokenizer)
     compute_metrics.multiclass = FLAGS.multiclass
     if FLAGS.train_dataset == "chatter":
         compute_metrics.eval_df = chatter_dev_df
@@ -499,7 +499,7 @@ def finetune(_):
     if FLAGS.instrtune:
         trainer = SFTTrainer(model=model,
                              args=config,
-                             data_collator=DataCollatorForCompletionOnlyLM(response_template=data_utils.ANSWER_TEMPLATE,
+                             data_collator=DataCollatorForCompletionOnlyLM(response_template=data.ANSWER_TEMPLATE,
                                                                            tokenizer=tokenizer),
                              train_dataset=train_dataset,
                              eval_dataset=(chatter_dev_dataset
