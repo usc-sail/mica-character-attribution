@@ -36,7 +36,3 @@ class MulticlassClassifier(AutoModel):
         loss = nn.functional.cross_entropy(score, labels)
         return modeling_outputs.SequenceClassifierOutput(loss=loss, logits=score)
 
-class MulticlassSiameseClassifier(AutoModel):
-    """Takes as input '[CHARACTER] <Character> [CONTEXT] <Context>' and attribute definitions, applies a language 
-    model to get character representation and attribute representations, apply a siamese network to get distances
-    between character and attribute representation, use cross-entropy or ranking loss"""
