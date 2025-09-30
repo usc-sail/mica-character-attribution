@@ -6,6 +6,7 @@ import utils
 from absl import flags
 from absl import logging
 from accelerate import PartialState
+from collections import Counter
 import json
 import jsonlines
 import numpy as np
@@ -19,6 +20,7 @@ import torch
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers import BitsAndBytesConfig
+from transformers import Trainer
 from trl import DataCollatorForCompletionOnlyLM
 from trl import SFTConfig
 from trl import SFTTrainer
@@ -184,7 +186,7 @@ def train(partial_state: PartialState,
                          processing_class=tokenizer,
                          peft_config=lora_config,
                          preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-                         compute_metrics=compute_metrics.compute_instruction_metrics,
+                         compute_metrics=compute_metrics.compute_sft_metrics,
                          callbacks=callbacks)
     
 
@@ -259,7 +261,7 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
 
     # instantiating tokenizer
     log("instantiating tokenizer")
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.model)
+    tokenizer = AutoTokenizer.from_pretrained(FLAGS.modelname)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -281,15 +283,18 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
     log("instantiating trainer")
     predictions_dir = os.path.join(FLAGS.modelpath, "predictions")
     os.makedirs(predictions_dir, exist_ok=True)
-    sft_config = SFTConfig(output_dir=predictions_dir, per_device_eval_batch_size=FLAGS.prediction_batch_size)
+    sft_config = SFTConfig(output_dir=predictions_dir,
+                           per_device_eval_batch_size=FLAGS.prediction_batch_size,
+                           bf16=FLAGS.bf16,
+                           fp16=not FLAGS.bf16)
     compute_metrics = evaluate.ComputeMetrics(tokenizer)
-    trainer = SFTTrainer(model=model,
-                         args=sft_config,
-                         data_collator=DataCollatorForCompletionOnlyLM(response_template=data.ANSWER_TEMPLATE,
-                                                                       tokenizer=tokenizer),
-                         processing_class=tokenizer,
-                         preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-                         compute_metrics=compute_metrics.compute_instruction_metrics)
+    trainer = Trainer(model=model,
+                      args=sft_config,
+                      data_collator=DataCollatorForCompletionOnlyLM(response_template=data.ANSWER_TEMPLATE,
+                                                                    tokenizer=tokenizer),
+                     processing_class=tokenizer,
+                     preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+                     compute_metrics=compute_metrics.compute_sft_metrics)
 
     # predict over datasets
     for dataset_name, (dataset, df) in dataset_name_to_dataset_and_df.items():
@@ -299,8 +304,8 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
         compute_metrics.dataset = matched_dataset_name
         metrics = trainer.predict(dataset).metrics
         log(f"{metrics}\n\n")
-        if partial_state.is_local_main_process:
-            predictions_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.csv")
-            metrics_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.json")
-            df.to_csv(predictions_file, index=False)
-            json.dump(metrics, open(metrics_file, "w"))
+        # if partial_state.is_local_main_process:
+        #     predictions_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.csv")
+        #     metrics_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.json")
+        #     df.to_csv(predictions_file, index=False)
+        #     json.dump(metrics, open(metrics_file, "w"))

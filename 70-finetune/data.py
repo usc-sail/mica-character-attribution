@@ -135,10 +135,7 @@ def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test
     trope_to_definition = {}
     for _, row in tropes_df.iterrows():
         trope_to_definition[row.trope] = row.summary
-    for characterid, character_df in tqdm.tqdm(map_df.groupby("character"),
-                                               total=len(map_df["character"].unique()),
-                                               unit="character",
-                                               desc="reading segments"):
+    for characterid, character_df in map_df.groupby("character"):
         characterid_to_imdbids[characterid] = character_df["imdb-id"].tolist()
         for imdbid, name in character_df[["imdb-id", "name"]].itertuples(index=False, name=None):
             characterid_and_imdbid_to_name[(characterid, imdbid)] = name

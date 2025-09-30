@@ -8,9 +8,10 @@ from absl import flags
 from accelerate import PartialState
 import collections
 
-flags.DEFINE_multi_enum("dataset", default=None, enum_values=data.get_dataset_names(), help="prediction datasets")
+flags.DEFINE_multi_enum("dataset", default=[], enum_values=data.get_dataset_names(), help="prediction datasets")
 flags.DEFINE_integer("tokenization_batch_size", default=4096, help="batch size for tokenization")
 flags.DEFINE_enum("model", default="sft", enum_values=["sft", "crm"], help="prediction model")
+flags.DEFINE_string("modelname", default="meta-llama/Llama-3.1-8B-Instruct", help="huggingface model name")
 flags.DEFINE_string("modelpath", default=None, help="path to trained model", required=True)
 flags.DEFINE_integer("prediction_batch_size", default=1, help="prediction batch size")
 flags.DEFINE_bool("bf16", default=False, help="use brain floating point (default=fp16)")

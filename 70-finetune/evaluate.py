@@ -7,8 +7,7 @@ from transformers.trainer import EvalPrediction
 from typing import Dict
 
 class ComputeMetrics:
-    """Compute metrics class for classification and instruction-tuning methods for CHATTER, PERSONET & 
-    STORY2PERSONALITY datasets"""
+    """Compute metrics class for classification and instruction-tuning methods for CHATTER & PERSONET datasets"""
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.eval_df = None
@@ -16,7 +15,7 @@ class ComputeMetrics:
 
     def _compute_metrics(self) -> Dict[str, float]:
         """Compute metrics for different datasets"""
-        if self.dataset == "chatter_contexts" or self.dataset == "chatter_segments":
+        if self.dataset == "chatter-contexts" or self.dataset == "chatter-segments":
             true_arr, pred_arr = [], []
             for _, sample_df in self.eval_df.groupby("key"):
                 nonnan_sample_df = sample_df.dropna(subset="pred")
@@ -63,6 +62,10 @@ class ComputeMetrics:
 
         labels = evalprediction.label_ids
         predictions = evalprediction.predictions
+        print(type(labels), type(predictions))
+        print(labels.shape, predictions.shape)
+        np.save("chatter_labels.npy", labels)
+        np.save("chatter_predictions.npy", predictions)
         rx, cx = np.where(labels != -100)
         predictions = list(map(lambda x: x.strip().lower(),
                                self.tokenizer.batch_decode(predictions[rx, cx - 1].reshape(-1, 1))))
