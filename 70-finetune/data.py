@@ -26,24 +26,42 @@ else:
     # AWS EC2
     DATADIR = "/home/ubuntu/data/mica-character-attribution"
 
-CHATTER_TEMPLATE = ("Given the definition of a character attribute or trope, the name of a character, and a story or "
-                    "segments of a story where the character appears, speaks or is mentioned, answer 'yes' or 'no' if "
-                    "the character portrays or is associated with the attribute or trope in the story.\n\n"
-                    "ATTRIBUTE: $ATTRIBUTE$\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$. \n\n ANSWER: $ANSWER$")
-PERSONET_TEMPLATE = ("Given some character attributes or traits, the name of a character, "
-                     "and an excerpt from a story where the character appears, speaks or is mentioned, "
-                     "pick the index of the attribute (index starts from 1) most strongly portrayed by "
-                     "or associated with the character.\n\n"
-                     "Do not return the attribute, just its index. "
-                     "For example, if the attributes are \"strong\", \"kind\", \"gentle\", and \"weak\", "
-                     "and the character most strongly portrays being kind, then return \"2\".\n\n"
-                     "ATTRIBUTES:\n1. $ATTRIBUTE1$\n2. $ATTRIBUTE2$\n3. $ATTRIBUTE3$\n4. $ATTRIBUTE4$\n"
-                     "5. $ATTRIBUTE5$\n\nCHARACTER: $CHARACTER$\n\nSTORY: $STORY$. \n\n ANSWER: $ANSWER$")
-ANSWER_TEMPLATE = " \n\n ANSWER:"
+SYSTEM_MESSAGE = """You are a document understanding model for movie scripts. Given a character, segments from a movie script where the character speaks or is mentioned, and the definition(s) of some character tropes, traits, or attributes, you can accurately answer whether the character portrays or is associated with some trope, trait, or attribute in the movie script segments."""
+
+CHATTER_TEMPLATE = """Character tropes are story-telling devices used by the writer to describe characters. Given below is the definition of the $TROPE$ trope and the segments from a movie script where the character "$CHARACTER$" speaks or is mentioned.
+    
+Read the movie script segments carefully and based on that answer yes or no if the character "$CHARACTER$" portrays or is associated with the $TROPE$ trope. Answer based only on the movie script segments. Do not rely on your prior knowledge.
+    
+$TROPE$ Definition: $TROPE_DEFINITION$
+
+Movie Script Segments:
+$STORY$
+
+    
+Does the character "$CHARACTER$" portray or is associated with the $TROPE$ trope in the above movie script segments?
+Answer yes or no. """
+
+PERSONET_TEMPLATE = """Character traits are single-word adjectives used to describe a character's personality. Given below are a list of some character traits and an excerpt from a book where the character "$CHARACTER$" speaks or is mentioned.
+
+Read the excerpt carefully and based on that choose exactly one trait from the list of traits which is mostly strongly portrayed or associated with the character "$CHARACTER$". Do not use synonyms or paraphrases for the trait. Answer based only on the excerpt. Do not rely on your prior knowledge.
+
+Traits:
+- $ATTRIBUTE1$
+- $ATTRIBUTE2$
+- $ATTRIBUTE3$
+- $ATTRIBUTE4$
+- $ATTRIBUTE5$
+
+Book Excerpt:
+$STORY$
+
+Choose the trait most strongly portrayed or associated with the character "$CHARACTER$" based on the excerpt. """
+
 NCLASSES = 5
 CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN = {250: 550, 500: 1000, 1000: 1800, 1500: 2700, 2000: 3500}
 PERSONET_SFT_SEQLEN = 1800
 CHATTER_SEGMENTS_SEQLEN = 14000
+IGNORE_INDEX = -100
 
 def get_dataset_names():
     dataset_names = []
@@ -199,32 +217,36 @@ def load_personet():
 def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
                        tokenizer: AutoTokenizer,
                        dataset_name: Literal["chatter-contexts", "chatter-segments", "personet"] = "chatter-contexts",
-                       chatter_contexts_size_in_words: Literal[250, 500, 1000, 1500, 2000] = 2000,
                        tokenization_batch_size = 4096,
                        disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
     """Create SFT Dataset and evaluation dataframe from data array"""
-    texts = []
     rows = []
-    input_ids, attention_mask = [], []
+    prompts = []
+    completions = []
 
     # create the texts for SFT, and the dataframe rows for saving predictions
     for obj in data:
         if dataset_name == "chatter-contexts" or dataset_name == "chatter-segments":
-            text = (CHATTER_TEMPLATE
-                    .replace("$ANSWER$", "yes" if obj["label"] == 1 else "no")
-                    .replace("$CHARACTER$", obj["character"])
-                    .replace("$ATTRIBUTE", obj["attribute-definition"])
-                    .replace("$STORY$", obj["text"]))
+            prompt = (CHATTER_TEMPLATE
+                      .replace("$TROPE$", obj["attribute-name"])
+                      .replace("$CHARACTER$", obj["character"])
+                      .replace("$TROPE_DEFINITION$", obj["attribute-definition"])
+                      .replace("$STORY$", obj["text"]))
+            messages = [{"role": "system", "content": SYSTEM_MESSAGE}, {"role": "user", "content": prompt}]
+            prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            completion = "yes" if obj["label"] == 1 else "no"
             row = [obj["key"], obj["character"], obj["attribute-name"], obj["label"]]
         else:
-            text = (PERSONET_TEMPLATE
-                    .replace("$ANSWER$", str(obj["label"] + 1))
-                    .replace("$CHARACTER$", obj["character"])
-                    .replace("$STORY$", obj["text"]))
+            prompt = PERSONET_TEMPLATE
             for i in range(NCLASSES):
-                text = text.replace(f"$ATTRIBUTE{i + 1}$", obj["attributes"][i])
-            row = [obj["key"], obj["character"]] + obj["attributes"] + [obj["label"] + 1]
-        texts.append(text)
+                prompt = prompt.replace(f"$ATTRIBUTE{i + 1}$", obj["attributes"][i])
+            prompt = prompt.replace("$CHARACTER$", obj["character"]).replace("$STORY$", obj["text"])
+            messages = [{"role": "system", "content": SYSTEM_MESSAGE}, {"role": "user", "content": prompt}]
+            prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            completion = obj["attributes"][obj["label"]]
+            row = [obj["key"], obj["character"]] + obj["attributes"] + [obj["attributes"][obj["label"]]]
+        prompts.append(prompt)
+        completions.append(completion)
         rows.append(row)
     
     # create the dataframe for saving predictions
@@ -235,60 +257,24 @@ def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
                           + ["label"])
 
     # tokenize the texts
-    n_batches = int(np.ceil(len(texts)/tokenization_batch_size))
+    prompt_ids = []
+    completion_ids = []
+    n_batches = int(np.ceil(len(prompts)/tokenization_batch_size))
     for i in tqdm.trange(n_batches, desc=f"{dataset_name} tokenization", disable=disable_progress_bar):
-        batch_texts = texts[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
-        encoding = tokenizer(batch_texts,
-                             padding=False,
-                             add_special_tokens=True,
-                             return_overflowing_tokens=False,
-                             return_length=False)
-        input_ids.extend(encoding["input_ids"])
-        attention_mask.extend(encoding["attention_mask"])
+        batch_prompts = prompts[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
+        batch_completions = completions[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
+        prompt_ids += tokenizer.encode(batch_prompts, padding=False, add_special_tokens=False)
+        completion_ids += tokenizer.encode(batch_completions, padding=False, add_special_tokens=False)
 
-    # find size of completions
-    chatter_yes_answer_sp_mask = tokenizer(ANSWER_TEMPLATE + " yes",
-                                           add_special_tokens=True,
-                                           return_special_tokens_mask=True)["special_tokens_mask"]
-    chatter_no_answer_sp_mask = tokenizer(ANSWER_TEMPLATE + " no",
-                                          add_special_tokens=True,
-                                          return_special_tokens_mask=True)["special_tokens_mask"]
-    is_first_token_sp = chatter_yes_answer_sp_mask[0] == 1
-    is_last_token_sp = chatter_yes_answer_sp_mask[-1] == 1
-    chatter_yes_answer_size = len(chatter_yes_answer_sp_mask) - is_first_token_sp - is_last_token_sp
-    chatter_no_answer_size = len(chatter_no_answer_sp_mask) - is_first_token_sp - is_last_token_sp
-    personet_answer_sizes = []
-    for i in range(NCLASSES):
-        sp_mask = tokenizer(ANSWER_TEMPLATE + f" {i + 1}",
-                            add_special_tokens=True,
-                            return_special_tokens_mask=True)["special_tokens_mask"]
-        answer_size = len(sp_mask) - is_first_token_sp - is_last_token_sp
-        personet_answer_sizes.append(answer_size)
-
-    # truncate to instruction sequence length
-    if dataset_name == "chatter-contexts":
-        seqlen = CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN[chatter_contexts_size_in_words]
-    elif dataset_name == "chatter-segments":
-        seqlen = CHATTER_SEGMENTS_SEQLEN
-    else:
-        seqlen = PERSONET_SFT_SEQLEN
-    for i in tqdm.trange(len(input_ids), desc=f"{dataset_name} truncation", disable=disable_progress_bar):
-        if len(input_ids[i]) > seqlen:
-            if dataset_name == "chatter-contexts" or dataset_name == "chatter-segments":
-                if data[i]["label"] == 1:
-                    start = -is_last_token_sp - chatter_yes_answer_size - (len(input_ids[i]) - seqlen)
-                    end = -is_last_token_sp - chatter_yes_answer_size
-                else:
-                    start = -is_last_token_sp - chatter_no_answer_size - (len(input_ids[i]) - seqlen)
-                    end = -is_last_token_sp - chatter_no_answer_size
-            else:
-                start = -is_last_token_sp - personet_answer_sizes[data[i]["label"]] - (len(input_ids[i]) - seqlen)
-                end = -is_last_token_sp - personet_answer_sizes[data[i]["label"]]
-            input_ids[i] = input_ids[i][:start] + input_ids[i][end:]
-            attention_mask[i] = attention_mask[i][:start] + attention_mask[i][end:]
+    # find input ids and label ids
+    input_ids = []
+    label_ids = []
+    for sample_prompt_ids, sample_completion_ids in zip(prompt_ids, completion_ids):
+        input_ids.append(sample_prompt_ids + sample_completion_ids)
+        label_ids.append([IGNORE_INDEX] * len(sample_prompt_ids) + sample_completion_ids)
 
     # create dataset
-    dataset = Dataset.from_dict({"input_ids": input_ids, "attention_mask": attention_mask})
+    dataset = Dataset.from_dict({"input_ids": input_ids, "labels": label_ids})
     return dataset, df
 
 def create_chr_dataset(data: List[Dict[str, Union[str, int]]],
