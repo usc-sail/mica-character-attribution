@@ -21,9 +21,9 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers import BitsAndBytesConfig
 from transformers import Trainer
-from trl import DataCollatorForCompletionOnlyLM
 from trl import SFTConfig
 from trl import SFTTrainer
+from trl.trainer.sft_trainer import DataCollatorForLanguageModeling
 from typing import Dict, List, Literal, Union
 
 FLAGS = flags.FLAGS
@@ -95,14 +95,12 @@ def train(partial_state: PartialState,
         data=train_data,
         tokenizer=tokenizer,
         dataset_name=train_and_dev_dataset_name,
-        chatter_contexts_size_in_words=FLAGS.chatter_train_and_dev_size,
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
     dev_dataset, dev_df = data.create_sft_dataset(
         data=dev_data,
         tokenizer=tokenizer,
         dataset_name=train_and_dev_dataset_name,
-        chatter_contexts_size_in_words=FLAGS.chatter_train_and_dev_size,
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
     chatter_test_dataset, chatter_test_df = data.create_sft_dataset(
@@ -118,7 +116,7 @@ def train(partial_state: PartialState,
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
     
-    
+    # log size of sequences
     train_ntokens = list(map(len, train_dataset["input_ids"]))
     dev_ntokens = list(map(len, dev_dataset["input_ids"]))
     chatter_test_ntokens = list(map(len, chatter_test_dataset["input_ids"]))
@@ -135,14 +133,7 @@ def train(partial_state: PartialState,
                      f"95%tile = {np.quantile(personet_test_ntokens, 0.95):.1f}")
         logging.info("\n\n")
 
-    # create SFT config
-    if train_and_dev_dataset_name == "chatter-contexts":
-        max_seq_length = data.CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN[FLAGS.chatter_train_and_dev_size]
-    else:
-        max_seq_length = data.PERSONET_SFT_SEQLEN
     sft_config = SFTConfig(output_dir=experiments_dir,
-                           max_seq_length=max_seq_length,
-                           packing=False,
                            eval_strategy="steps" if FLAGS.eval else "no",
                            eval_steps=FLAGS.eval_steps,
                            eval_delay=FLAGS.eval_delay,
@@ -179,8 +170,7 @@ def train(partial_state: PartialState,
     log("instantiating trainer")
     trainer = SFTTrainer(model=model,
                          args=sft_config,
-                         data_collator=DataCollatorForCompletionOnlyLM(response_template=data.ANSWER_TEMPLATE,
-                                                                       tokenizer=tokenizer),
+                         data_collator=DataCollatorForLanguageModeling(pad_token_id=tokenizer.pad_token_id),
                          train_dataset=train_dataset,
                          eval_dataset=dev_dataset,
                          processing_class=tokenizer,
@@ -290,11 +280,10 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
     compute_metrics = evaluate.ComputeMetrics(tokenizer)
     trainer = Trainer(model=model,
                       args=sft_config,
-                      data_collator=DataCollatorForCompletionOnlyLM(response_template=data.ANSWER_TEMPLATE,
-                                                                    tokenizer=tokenizer),
-                     processing_class=tokenizer,
-                     preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-                     compute_metrics=compute_metrics.compute_sft_metrics)
+                      data_collator=DataCollatorForLanguageModeling(pad_token_id=tokenizer.pad_token_id),
+                      processing_class=tokenizer,
+                      preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+                      compute_metrics=compute_metrics.compute_sft_metrics)
 
     # predict over datasets
     for dataset_name, (dataset, df) in dataset_name_to_dataset_and_df.items():

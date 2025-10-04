@@ -4,6 +4,7 @@ A CHATTER data sample contains the following keys: key, docid, character, attrib
 
 A PERSONET data sample contains the following keys: key, docid, character, attributes, text, label, partition
 """
+from absl import logging
 import collections
 from datasets import Dataset
 import jsonlines
@@ -19,6 +20,9 @@ HOST = socket.gethostname()
 if HOST == "redondo":
     # lab server
     DATADIR = "/data1/sbaruah/mica-character-attribution"
+elif HOST == "Sabyasachees-MacBook-Air.local":
+    # local machine
+    DATADIR = "/Users/sabyasachee/Documents/projects/chatter/data"
 elif HOST.endswith("hpc.usc.edu"):
     # university HPC compute
     DATADIR = "/scratch1/sbaruah/mica-character-attribution"
@@ -58,7 +62,7 @@ $STORY$
 Choose the trait most strongly portrayed or associated with the character "$CHARACTER$" based on the excerpt. """
 
 NCLASSES = 5
-CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN = {250: 550, 500: 1000, 1000: 1800, 1500: 2700, 2000: 3500}
+CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN = {250: 1024, 500: 1024, 1000: 2048, 1500: 2048, 2000: 4096}
 PERSONET_SFT_SEQLEN = 1800
 CHATTER_SEGMENTS_SEQLEN = 14000
 IGNORE_INDEX = -100
@@ -263,13 +267,20 @@ def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
     for i in tqdm.trange(n_batches, desc=f"{dataset_name} tokenization", disable=disable_progress_bar):
         batch_prompts = prompts[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
         batch_completions = completions[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
-        prompt_ids += tokenizer.encode(batch_prompts, padding=False, add_special_tokens=False)
-        completion_ids += tokenizer.encode(batch_completions, padding=False, add_special_tokens=False)
+        prompt_ids += tokenizer(batch_prompts, padding=False, add_special_tokens=False)["input_ids"]
+        completion_ids += tokenizer(batch_completions, padding=False, add_special_tokens=False)["input_ids"]
+
+    # find maxlen in the power of 2
+    maxlen = max(np.array(list(map(len, prompt_ids))) + np.array(list(map(len, completion_ids))))
+    maxlen = int(2**np.round(np.log2(maxlen)))
+    logging.info(f"{dataset_name} maxlen = {maxlen} tokens")
 
     # find input ids and label ids
     input_ids = []
     label_ids = []
     for sample_prompt_ids, sample_completion_ids in zip(prompt_ids, completion_ids):
+        if len(sample_prompt_ids) > maxlen - len(sample_completion_ids):
+            sample_prompt_ids = sample_prompt_ids[: maxlen - len(sample_completion_ids)]
         input_ids.append(sample_prompt_ids + sample_completion_ids)
         label_ids.append([IGNORE_INDEX] * len(sample_prompt_ids) + sample_completion_ids)
 
