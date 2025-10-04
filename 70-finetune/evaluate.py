@@ -1,4 +1,6 @@
 """Evaluation class for instruction-tuning and classification models"""
+import data
+
 import numpy as np
 import pandas as pd
 import re
@@ -52,14 +54,20 @@ class ComputeMetrics:
 
         # function to codify label text
         def convert_label_text_to_label(row):
-            if row["label_text == "yes":
-                return 1
-            elif label_text == "no":
-                return 0
-            elif label_text in ["1", "2", "3", "4", "5"]:
-                return int(label_text)
+            label_text = row["label_text"]
+            if self.dataset == "chatter-contexts" or self.dataset == "chatter-segments":
+                if label_text == "yes":
+                    return 1
+                elif label_text == "no":
+                    return 0
+                else:
+                    return np.nan
             else:
-                return np.nan
+                attribute_texts = [row[f"attribute-{i + 1}"] for i in range(data.NCLASSES)]
+                if label_text in attribute_texts:
+                    return label_text
+                else:
+                    return ""
 
         label_ids = evalprediction.label_ids
         prediction_ids = evalprediction.predictions
@@ -68,10 +76,14 @@ class ComputeMetrics:
             i = np.nonzero(sample_label_ids != -100)[0]
             sample_completion_ids = sample_prediction_ids[i - 1:]
             sample_prediction_text = self.tokenizer.decode(sample_completion_ids, skip_special_tokens=True).lower()
-            sample_prediction_text = re.sub("\s+", "", sample_prediction_text)
+            pattern_match = re.search("\w+", sample_prediction_text)
+            if pattern_match is not None:
+                sample_prediction_text = pattern_match.group(0)
+            else:
+                sample_prediction_text = ""
             prediction_texts.append(sample_prediction_text)
         self.eval_df["pred-text"] = prediction_texts
-        self.eval_df["pred"] = self.eval_df.apply(
+        self.eval_df["pred"] = self.eval_df.apply(convert_label_text_to_label)
         return self._compute_metrics()
 
     def compute_chr_metrics(self, evalprediction: EvalPrediction) -> Dict[str, float]:

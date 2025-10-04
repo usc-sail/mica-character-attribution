@@ -6,7 +6,6 @@ import utils
 from absl import flags
 from absl import logging
 from accelerate import PartialState
-from collections import Counter
 import json
 import jsonlines
 import numpy as np
