@@ -20,15 +20,14 @@ flags.DEFINE_enum("train_dataset",
                   help="training dataset")
 
 # CHATTER arguments
-flags.DEFINE_enum("chatter_train_and_dev_truncation_strategy",
+flags.DEFINE_enum("chatter_truncation_strategy",
                   default="first",
                   enum_values=["first", "semantic"],
-                  help=("truncation strategy on character segments to create the chatter training and development set "
-                        "documents"))
-flags.DEFINE_enum("chatter_train_and_dev_size",
+                  help="truncation strategy on character segments to create the chatter contexts documents")
+flags.DEFINE_enum("chatter_size",
                   default="2000",
                   enum_values=["250", "500", "1000", "1500", "2000"],
-                  help="size of the chatter training and development documents in words")
+                  help="size of the chatter contexts documents in words")
 
 # dataset processing arguments
 flags.DEFINE_integer("tokenization_batch_size", default=4096, help="batch size for tokenization")
@@ -55,6 +54,8 @@ flags.DEFINE_float("dropout", default=0, help="dropout")
 
 # training arguments
 flags.DEFINE_integer("train_batch_size", default=1, help="per GPU training batch size")
+flags.DEFINE_integer("gradient_accumulation_steps", default=1, help="number of gradient accumulation steps")
+flags.DEFINE_bool("gradient_checkpointing", default=False, help="enable gradient checkpointing")
 flags.DEFINE_float("lr", default=2e-5, help="learning rate")
 flags.DEFINE_integer("warmup_steps", default=0, help="number of steps used for linear warmup from 0 to lr")
 flags.DEFINE_string("optim",
@@ -67,7 +68,7 @@ flags.DEFINE_float("max_grad_norm", default=10, help="maximum gradient norm")
 
 # evaluation arguments
 flags.DEFINE_bool("eval", default=True, help="do evaluation during training")
-flags.DEFINE_integer("eval_steps", default=32, help="training steps between successive evaluations")
+flags.DEFINE_integer("eval_steps", default=64, help="training steps between successive evaluations")
 flags.DEFINE_integer("eval_batch_size", default=1, help="evaluation batch size")
 flags.DEFINE_integer("eval_accumulation_steps",
                      default=None,
@@ -99,37 +100,33 @@ def log(message):
 def get_experiments_directory():
     # decide experiments directory
     model_dir = FLAGS.model
-    if FLAGS.train_dataset == "chatter":
-        train_dir = f"chatter-{FLAGS.chatter_train_and_dev_truncation_strategy}-{FLAGS.chatter_train_and_dev_size}"
+    if FLAGS.train_dataset == "chatter-contexts":
+        train_part = f"chatter-{FLAGS.chatter_truncation_strategy}-{FLAGS.chatter_size}"
     else:
-        train_dir = "personet"
-    modelname_dir = FLAGS.modelname.split("/")[-1]
+        train_part = "personet"
+    modelname_part = FLAGS.modelname.split("/")[-1]
     if FLAGS.load_4bit:
-        modelname_dir += "-4bit"
+        modelname_part += "-4bit"
     elif FLAGS.load_8bit:
-        modelname_dir += "-8bit"
+        modelname_part += "-8bit"
     if FLAGS.bf16:
-        modelname_dir += "-bf16"
+        modelname_part += "-bf16"
     else:
-        modelname_dir += "-fp16"
-    datetime_dir = datetime.strftime(datetime.now(), "%Y%b%d-%H%M%S")
-    experiments_dir = os.path.join(data.DATADIR,
-                                   "50-modeling/finetune",
-                                   model_dir,
-                                   train_dir,
-                                   modelname_dir,
-                                   datetime_dir)
+        modelname_part += "-fp16"
+    datetime_part = datetime.strftime(datetime.now(), "%Y%b%d-%H%M%S")
+    filename = f"{train_part}--{modelname_part}--{datetime_part}"
+    experiments_dir = os.path.join(data.DATADIR, "70-finetune", model_dir, filename)
     return experiments_dir
 
-def log_arguments(self):
+def log_arguments():
     logging.info("ARGUMENTS")
 
     # log training dataset
     logging.info("================================================================================================")
     logging.info(f"{'train dataset':30s} = {FLAGS.train_dataset}")
-    if FLAGS.train_dataset == "chatter":
-        logging.info(f"{'chatter truncation strategy':30s} = {FLAGS.chatter_train_and_dev_truncation_strategy}")
-        logging.info(f"{'chatter document size':30s} = {FLAGS.chatter_train_and_dev_size} words")
+    if FLAGS.train_dataset == "chatter-contexts":
+        logging.info(f"{'chatter truncation strategy':30s} = {FLAGS.chatter_truncation_strategy}")
+        logging.info(f"{'chatter document size':30s} = {FLAGS.chatter_size} words")
 
     # log model arguments
     logging.info(f"{'model':30s} = {FLAGS.model}")
@@ -149,6 +146,8 @@ def log_arguments(self):
     # log training arguments
     logging.info(f"{'train-batch-size':30s} = {FLAGS.train_batch_size}")
     logging.info(f"{'learning-rate':30s} = {FLAGS.lr}")
+    logging.info(f"{'gradient-accumulation':30s} = {FLAGS.gradient_accumulation_steps}")
+    logging.info(f"{'gradient-checkpointing':30s} = {FLAGS.gradient_checkpointing}")
     logging.info(f"{'warmup-steps':30s} = {FLAGS.warmup_steps}")
     logging.info(f"{'optimizer':30s} = {FLAGS.optim}")
     logging.info(f"{'weight-decay':30s} = {FLAGS.weight_decay}")
@@ -168,8 +167,7 @@ def log_arguments(self):
     # log model saving arguments
     logging.info(f"{'save-model':30s} = {FLAGS.save_model}")
 
-    logging.info("================================================================================================")
-    logging.info("\n\n")
+    logging.info("================================================================================================\n")
 
 def train(_):
     """Do supervized fine-tuning or model character representations for the character attribution task"""
@@ -185,14 +183,12 @@ def train(_):
 
     # read chatter data
     log("reading chatter data")
-    chatter_train_and_dev_data = data.load_chatter_contexts(
-        truncation_strategy=FLAGS.chatter_train_and_dev_truncation_strategy,
-        size_in_words=FLAGS.chatter_train_and_dev_size,
-        anonymize=False,
-        partitions=["train", "dev"])
-    chatter_train_data = list(filter(lambda obj: obj["partition"] == "train", chatter_train_and_dev_data))
-    chatter_dev_data = list(filter(lambda obj: obj["partition"] == "dev", chatter_train_and_dev_data))
-    chatter_test_data = data.load_chatter_segments(anonymize=True, partitions=["test"])
+    chatter_data = data.load_chatter_contexts(truncation_strategy=FLAGS.chatter_truncation_strategy,
+                                              size_in_words=int(FLAGS.chatter_size),
+                                              anonymize=False)
+    chatter_train_data = list(filter(lambda obj: obj["partition"] == "train", chatter_data))
+    chatter_dev_data = list(filter(lambda obj: obj["partition"] == "dev", chatter_data))
+    chatter_test_data = list(filter(lambda obj: obj["partition"] == "test", chatter_data))
 
     # read personet data
     log("reading personet data")
@@ -208,16 +204,15 @@ def train(_):
         logging.info(f"{len(chatter_test_data)} CHATTER test examples")
         logging.info(f"{len(personet_train_data)} PERSONET train examples")
         logging.info(f"{len(personet_dev_data)} PERSONET dev examples")
-        logging.info(f"{len(personet_test_data)} PERSONET test examples")
-        logging.info("\n\n")
+        logging.info(f"{len(personet_test_data)} PERSONET test examples\n")
 
     # assign train and dev data
-    if FLAGS.train_dataset == "chatter":
+    if FLAGS.train_dataset == "chatter-contexts":
         train_data = chatter_train_data
         dev_data = chatter_dev_data
     else:
         train_data = personet_train_data
-        dev_data = chatter_dev_data
+        dev_data = personet_dev_data
 
     if FLAGS.model == "sft":
         sft.train(partial_state=PARTIALSTATE,

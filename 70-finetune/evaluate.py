@@ -54,7 +54,7 @@ class ComputeMetrics:
 
         # function to codify label text
         def convert_label_text_to_label(row):
-            label_text = row["label_text"]
+            label_text = row["pred-text"]
             if self.dataset == "chatter-contexts" or self.dataset == "chatter-segments":
                 if label_text == "yes":
                     return 1
@@ -73,8 +73,9 @@ class ComputeMetrics:
         prediction_ids = evalprediction.predictions
         prediction_texts = []
         for sample_label_ids, sample_prediction_ids in zip(label_ids, prediction_ids):
-            i = np.nonzero(sample_label_ids != -100)[0]
+            i = np.nonzero(sample_label_ids != data.IGNORE_INDEX)[0][0]
             sample_completion_ids = sample_prediction_ids[i - 1:]
+            sample_completion_ids = sample_completion_ids[sample_completion_ids != data.IGNORE_INDEX]
             sample_prediction_text = self.tokenizer.decode(sample_completion_ids, skip_special_tokens=True).lower()
             pattern_match = re.search("\w+", sample_prediction_text)
             if pattern_match is not None:
@@ -83,7 +84,7 @@ class ComputeMetrics:
                 sample_prediction_text = ""
             prediction_texts.append(sample_prediction_text)
         self.eval_df["pred-text"] = prediction_texts
-        self.eval_df["pred"] = self.eval_df.apply(convert_label_text_to_label)
+        self.eval_df["pred"] = self.eval_df.apply(convert_label_text_to_label, axis=1)
         return self._compute_metrics()
 
     def compute_chr_metrics(self, evalprediction: EvalPrediction) -> Dict[str, float]:

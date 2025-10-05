@@ -74,18 +74,20 @@ def train(partial_state: PartialState,
     # instantiate model
     log("instantiating model")
     model = AutoModelForCausalLM.from_pretrained(FLAGS.modelname,
-                                                 torch_dtype=compute_dtype,
+                                                 dtype=compute_dtype,
                                                  quantization_config=quantization_config,
                                                  device_map={"": partial_state.process_index},
                                                  attn_implementation=FLAGS.attn)
-    if model.config.pad_token_id is None:
-        model.config.pad_token_id = model.config.eos_token_id
 
     # instantiating tokenizer
     log("instantiating tokenizer")
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.model)
+    tokenizer = AutoTokenizer.from_pretrained(FLAGS.modelname)
+
+    # setting pad token id
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+        model.config.pad_token_id = model.config.eos_token_id = tokenizer.eos_token_id
+        model.generation_config.pad_token_id = model.generation_config.eos_token_id = tokenizer.eos_token_id
 
     # create datasets
     log("creating datasets")
@@ -94,18 +96,21 @@ def train(partial_state: PartialState,
         data=train_data,
         tokenizer=tokenizer,
         dataset_name=train_and_dev_dataset_name,
+        chatter_contexts_size_in_words=int(FLAGS.chatter_size),
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
     dev_dataset, dev_df = data.create_sft_dataset(
         data=dev_data,
         tokenizer=tokenizer,
         dataset_name=train_and_dev_dataset_name,
+        chatter_contexts_size_in_words=int(FLAGS.chatter_size),
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
     chatter_test_dataset, chatter_test_df = data.create_sft_dataset(
         data=chatter_test_data,
         tokenizer=tokenizer,
-        dataset_name="chatter-segments",
+        dataset_name="chatter-contexts",
+        chatter_contexts_size_in_words=int(FLAGS.chatter_size),
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
     personet_test_dataset, personet_test_df = data.create_sft_dataset(
@@ -129,10 +134,10 @@ def train(partial_state: PartialState,
         logging.info(f"chatter test: max = {max(chatter_test_ntokens)}, min = {min(chatter_test_ntokens)}, "
                      f"95%tile = {np.quantile(chatter_test_ntokens, 0.95):.1f}")
         logging.info(f"personet test: max = {max(personet_test_ntokens)}, min = {min(personet_test_ntokens)}, "
-                     f"95%tile = {np.quantile(personet_test_ntokens, 0.95):.1f}")
-        logging.info("\n\n")
+                     f"95%tile = {np.quantile(personet_test_ntokens, 0.95):.1f}\n")
 
     sft_config = SFTConfig(output_dir=experiments_dir,
+                           max_length=None,
                            eval_strategy="steps" if FLAGS.eval else "no",
                            eval_steps=FLAGS.eval_steps,
                            eval_delay=FLAGS.eval_delay,
@@ -140,6 +145,7 @@ def train(partial_state: PartialState,
                            per_device_train_batch_size=FLAGS.train_batch_size,
                            per_device_eval_batch_size=FLAGS.eval_batch_size,
                            learning_rate=FLAGS.lr,
+                           gradient_accumulation_steps=FLAGS.gradient_accumulation_steps,
                            warmup_steps=FLAGS.warmup_steps,
                            weight_decay=FLAGS.weight_decay,
                            max_grad_norm=FLAGS.max_grad_norm,
@@ -151,7 +157,8 @@ def train(partial_state: PartialState,
                            bf16=FLAGS.bf16,
                            fp16=not FLAGS.bf16,
                            optim=FLAGS.optim,
-                           gradient_checkpointing_kwargs={"use_reentrant": False},
+                           gradient_checkpointing=FLAGS.gradient_checkpointing,
+                           gradient_checkpointing_kwargs={"use_reentrant": True},
                            save_strategy="no")
 
     # create compute metrics instance
@@ -180,11 +187,14 @@ def train(partial_state: PartialState,
     
 
     # train
-    log("\n\n\ntraining started")
+    log("training started")
     log("================================================================================================")
     trainer.train()
-    log("\n\n\n==========================================================================================")
-    log("training done\n\n\n")
+    log("==========================================================================================")
+    log("training done")
+
+    # release training memory
+    utils.release_training_memory(trainer)
 
     # plot train loss, dev loss, and dev metric
     log("plotting")
@@ -196,7 +206,7 @@ def train(partial_state: PartialState,
     # predict and evaluate
     datasets = [dev_dataset, chatter_test_dataset, personet_test_dataset]
     dfs = [dev_df, chatter_test_df, personet_test_df]
-    dataset_names = [train_and_dev_dataset_name, "chatter-segments", "personet"]
+    dataset_names = [train_and_dev_dataset_name, "chatter-contexts", "personet"]
     partitions = ["dev", "test", "test"]
     for dataset, df, name, partition in zip(datasets, dfs, dataset_names, partitions):
         log(f"evaluating {name} {partition}")
@@ -240,19 +250,21 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
     # load model
     log("instantiating model")
     base_model = AutoModelForCausalLM.from_pretrained(FLAGS.modelname,
-                                                      torch_dtype=compute_dtype,
+                                                      dtype=compute_dtype,
                                                       quantization_config=quantization_config,
                                                       device_map={"": partial_state.process_index},
                                                       attn_implementation=FLAGS.attn)
     model = PeftModel.from_pretrained(base_model, FLAGS.modelpath)
-    if model.config.pad_token_id is None:
-        model.config.pad_token_id = model.config.eos_token_id
 
     # instantiating tokenizer
     log("instantiating tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.modelname)
+
+    # setting pad token id
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+        model.config.pad_token_id = model.config.eos_token_id = tokenizer.eos_token_id
+        model.generation_config.pad_token_id = model.generation_config.eos_token_id = tokenizer.eos_token_id
 
     # create datasets
     log("creating datasets")
@@ -277,9 +289,11 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
                            bf16=FLAGS.bf16,
                            fp16=not FLAGS.bf16)
     compute_metrics = evaluate.ComputeMetrics(tokenizer)
+    dummy_train_dataset = list(dataset_name_to_dataset_and_df.values())[0][0]
     trainer = Trainer(model=model,
                       args=sft_config,
                       data_collator=DataCollatorForLanguageModeling(pad_token_id=tokenizer.pad_token_id),
+                      train_dataset=dummy_train_dataset,
                       processing_class=tokenizer,
                       preprocess_logits_for_metrics=preprocess_logits_for_metrics,
                       compute_metrics=compute_metrics.compute_sft_metrics)
@@ -292,8 +306,8 @@ def predict(partial_state: PartialState, datasetname_to_data: Dict[str, List]):
         compute_metrics.dataset = matched_dataset_name
         metrics = trainer.predict(dataset).metrics
         log(f"{metrics}\n\n")
-        # if partial_state.is_local_main_process:
-        #     predictions_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.csv")
-        #     metrics_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.json")
-        #     df.to_csv(predictions_file, index=False)
-        #     json.dump(metrics, open(metrics_file, "w"))
+        if partial_state.is_local_main_process:
+            predictions_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.csv")
+            metrics_file = os.path.join(FLAGS.modelpath, f"predictions/{dataset_name}.json")
+            df.to_csv(predictions_file, index=False)
+            json.dump(metrics, open(metrics_file, "w"))

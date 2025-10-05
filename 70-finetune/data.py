@@ -64,7 +64,7 @@ Choose the trait most strongly portrayed or associated with the character "$CHAR
 NCLASSES = 5
 CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN = {250: 1024, 500: 1024, 1000: 2048, 1500: 2048, 2000: 4096}
 PERSONET_SFT_SEQLEN = 1800
-CHATTER_SEGMENTS_SEQLEN = 14000
+CHATTER_SEGMENTS_SFT_SEQLEN = 14000
 IGNORE_INDEX = -100
 
 def get_dataset_names():
@@ -221,6 +221,7 @@ def load_personet():
 def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
                        tokenizer: AutoTokenizer,
                        dataset_name: Literal["chatter-contexts", "chatter-segments", "personet"] = "chatter-contexts",
+                       chatter_contexts_size_in_words: Literal[250, 500, 1000, 1500, 2000] = 2000,
                        tokenization_batch_size = 4096,
                        disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
     """Create SFT Dataset and evaluation dataframe from data array"""
@@ -270,15 +271,21 @@ def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
         prompt_ids += tokenizer(batch_prompts, padding=False, add_special_tokens=False)["input_ids"]
         completion_ids += tokenizer(batch_completions, padding=False, add_special_tokens=False)["input_ids"]
 
-    # find maxlen in the power of 2
-    maxlen = max(np.array(list(map(len, prompt_ids))) + np.array(list(map(len, completion_ids))))
-    maxlen = int(2**np.round(np.log2(maxlen)))
-    logging.info(f"{dataset_name} maxlen = {maxlen} tokens")
+    # find maximum sft sequence length
+    if dataset_name == "chatter-contexts":
+        maxlen = CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN[chatter_contexts_size_in_words]
+    elif dataset_name == "chatter-segments":
+        maxlen = CHATTER_SEGMENTS_SFT_SEQLEN
+    else:
+        maxlen = PERSONET_SFT_SEQLEN
 
     # find input ids and label ids
     input_ids = []
     label_ids = []
-    for sample_prompt_ids, sample_completion_ids in zip(prompt_ids, completion_ids):
+    for sample_prompt_ids, sample_completion_ids in tqdm.tqdm(zip(prompt_ids, completion_ids),
+                                                              total=len(prompt_ids),
+                                                              desc=f"{dataset_name} truncation",
+                                                              disable=disable_progress_bar):
         if len(sample_prompt_ids) > maxlen - len(sample_completion_ids):
             sample_prompt_ids = sample_prompt_ids[: maxlen - len(sample_completion_ids)]
         input_ids.append(sample_prompt_ids + sample_completion_ids)
@@ -288,9 +295,9 @@ def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
     dataset = Dataset.from_dict({"input_ids": input_ids, "labels": label_ids})
     return dataset, df
 
-def create_chr_dataset(data: List[Dict[str, Union[str, int]]],
+def create_crm_dataset(data: List[Dict[str, Union[str, int]]],
                        tokenizer: AutoTokenizer,
-                       dataset_name: Literal["chatter", "personet"] = "chatter",
+                       dataset_name: Literal["chatter-contexts", "chatter-segments", "personet"] = "chatter-contexts",
                        tokenization_batch_size = 4096,
                        disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
     """Create Character Representations Dataset and evaluation dataframe from data array"""
@@ -301,10 +308,10 @@ def create_chr_dataset(data: List[Dict[str, Union[str, int]]],
     # create the text pairs for the Character Representations and dataframe rows for saving predictions
     for obj in data:
         text_pair = [obj["character"], obj["text"]]
-        if dataset_name == "chatter":
+        if dataset_name == "chatter-contexts" or dataset_name == "chatter-segments":
             row = [obj["key"], obj["character"], obj["attribute-name"], obj["label"]]
         else:
-            row = [obj["key"], obj["character"]] + obj["attributes"] + [obj["label"] + 1]
+            row = [obj["key"], obj["character"]] + obj["attributes"] + [obj["attributes"][obj["label"]]]
         text_pairs.append(text_pair)
         rows.append(row)
 
