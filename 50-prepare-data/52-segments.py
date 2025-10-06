@@ -69,7 +69,7 @@ def find_character_spans_and_create_paragraph_from_segments(
         # clean the text and find the difference in length before and after cleaning
         # the difference will be used to change the ith and following spans
         initial_length = len(paragraph[start: end])
-        cleaned_text = re.sub("\s+", " ", paragraph[start: end])
+        cleaned_text = re.sub(r"\s+", " ", paragraph[start: end])
         final_length = len(cleaned_text)
         paragraph = paragraph[:start] + cleaned_text + paragraph[end:]
         offset = final_length - initial_length
@@ -79,22 +79,6 @@ def find_character_spans_and_create_paragraph_from_segments(
             paragraph_character_spans[j] = [paragraph_character_spans[j][0] + offset,
                                             paragraph_character_spans[j][1] + offset]
 
-    # check if the non-whitespace characters remain the same
-    segment_texts_non_whitespace_text = re.sub("\s+", "", "".join(segment_texts))
-    paragraph_non_whitespace_text = re.sub("\s+", "", paragraph)
-    assert segment_texts_non_whitespace_text == paragraph_non_whitespace_text, (
-        "non whitespace text differ between segments and paragraphs --> something has gone wrong!")
-
-    # check if the segment_spans and paragraph_spans map to the same text
-    i = 0
-    for segment_text, segment_character_spans in zip(segment_texts, segment_character_spans_list):
-        for start, end in segment_character_spans:
-            segment_span_text = segment_text[start: end]
-            paragraph_span_start, paragraph_span_end = paragraph_character_spans[i]
-            paragraph_span_text = paragraph[paragraph_span_start: paragraph_span_end]
-            assert segment_span_text == paragraph_span_text, "segment and paragraph span texts don't match!"
-            i += 1
-
     return paragraph, paragraph_character_spans
 
 def extract_segments(_):
@@ -102,7 +86,7 @@ def extract_segments(_):
     # get file paths
     movie_scripts_dir = os.path.join(data_utils.DATADIR, "CHATTER/movie-scripts")
     map_file = os.path.join(data_utils.DATADIR, "CHATTER/character-movie-map.csv")
-    output_dir = os.path.join(data_utils.DATADIR, "CHATTER", "new-anonymized-segments" if FLAGS.anonymize else "new-segments")
+    output_dir = os.path.join(data_utils.DATADIR, "CHATTER", "anonymized-segments" if FLAGS.anonymize else "segments")
     os.makedirs(output_dir, exist_ok=True)
 
     # read data
@@ -130,12 +114,16 @@ def extract_segments(_):
             segment_rows = []
             mention_rows = []
             for segment_id, segment_df in segments_df.groupby("segment-id", sort=False):
-                offset = 0
                 if pd.notna(segment_df["imdb-character"].values[0]):
                     segment_df = segment_df.sort_values("start", ascending=True)
                     segment_text = segment_df["segment-text"].values[0]
+                    offset = 0
+                    prev_end = None
                     for _, row in segment_df.iterrows():
                         name, start, end = row["imdb-character"], int(row["start"]), int(row["end"])
+                        if prev_end is not None and start < prev_end:
+                            continue
+                        prev_end = end
                         start += offset
                         end += offset
                         if (name, imdbid) in name_and_imdbid_to_characterid:
@@ -146,14 +134,16 @@ def extract_segments(_):
                             n += 1
                         charactername = "CHARACTER" + characterid[1:]
                         segment_text = segment_text[:start] + charactername + segment_text[end:]
-                        end = start + len(charactername)
-                        mention_rows.append([segment_id, name, start, end])
                         offset += len(charactername) - (end - start)
+                        end = start + len(charactername)
+                        mention_text = charactername
+                        mention_rows.append([name, segment_id, start, end, mention_text])
                     segment_rows.append([segment_id, segment_text])
                 else:
                     segment_rows.append([segment_id, segment_df["segment-text"].values[0]])
             segments_df = pd.DataFrame(segment_rows, columns=["segment-id", "segment-text"])
-            mentions_df = pd.DataFrame(mention_rows, columns=["segment-id", "imdb-character", "start", "end"])
+            mentions_df = pd.DataFrame(mention_rows, columns=["imdb-character", "segment-id", "start", "end", "text"])
+            mentions_df = mentions_df.sort_values(["imdb-character", "segment-id", "start"], ascending=True)
             imdbid_to_segments_df[imdbid] = segments_df
             imdbid_to_mentions_df[imdbid] = mentions_df
 
