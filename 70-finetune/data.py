@@ -106,6 +106,7 @@ def load_chatter_contexts(truncation_strategy: Literal["first", "semantic"] = "f
                                     "attribute-name": obj["trope"],
                                     "attribute-definition": obj["definition"],
                                     "text": obj["text"],
+                                    "spans": obj["spans"],
                                     "label": obj["label"],
                                     "partition": obj["partition"]})
     else:
@@ -133,6 +134,7 @@ def load_chatter_contexts(truncation_strategy: Literal["first", "semantic"] = "f
                                     "attribute-name": trope,
                                     "attribute-definition": definition,
                                     "text": obj["text"],
+                                    "spans": obj["spans"],
                                     "label": label,
                                     "partition": partition})
     return processed_data
@@ -152,6 +154,7 @@ def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test
 
     # read segments and character & movie mapping data
     characterid_and_imdbid_to_segment = {}
+    characterid_and_imdbid_to_spans = {}
     characterid_and_imdbid_to_name = {}
     characterid_to_imdbids = {}
     trope_to_definition = {}
@@ -162,8 +165,15 @@ def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test
         for imdbid, name in character_df[["imdb-id", "name"]].itertuples(index=False, name=None):
             characterid_and_imdbid_to_name[(characterid, imdbid)] = name
             segment_file = os.path.join(segments_dir, f"{characterid}-{imdbid}.txt")
+            spans_file = os.path.join(segments_dir, f"{characterid}-{imdbid}-spans.txt")
             if os.path.exists(segment_file):
                 characterid_and_imdbid_to_segment[(characterid, imdbid)] = open(segment_file).read().strip()
+                spans = []
+                with open(spans_file) as fr:
+                    for line in fr:
+                        start, end = line.split()
+                        spans.append([start, end])
+                characterid_and_imdbid_to_spans[(characterid, imdbid)] = spans
 
     # process data
     processed_data = []
@@ -182,6 +192,7 @@ def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test
                                        "attribute-name": trope,
                                        "attribute-definition": definition,
                                        "text": characterid_and_imdbid_to_segment[(characterid, imdbid)],
+                                       "spans": characterid_and_imdbid_to_spans[(characterid, imdbid)],
                                        "label": label,
                                        "partition": partition})
     return processed_data
@@ -213,6 +224,7 @@ def load_personet():
                          "character": obj["character"],
                          "attributes": traits,
                          "text": text,
+                         "spans": [], # TODO: populate this
                          "label": answer,
                          "partition": obj["partition"]}
         processed_data.append(processed_obj)
@@ -295,47 +307,81 @@ def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
     dataset = Dataset.from_dict({"input_ids": input_ids, "labels": label_ids})
     return dataset, df
 
-def create_crm_dataset(data: List[Dict[str, Union[str, int]]],
+def create_crm_dataset(data: List[Dict[str, Union[str, int, List[List[int]]]]],
+                       tropes_ix: Dict[str, int],
+                       traits_ix: Dict[str, int],
                        tokenizer: AutoTokenizer,
                        dataset_name: Literal["chatter-contexts", "chatter-segments", "personet"] = "chatter-contexts",
-                       tokenization_batch_size = 4096,
                        disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
     """Create Character Representations Dataset and evaluation dataframe from data array"""
-    text_pairs = []
-    rows = []
-    input_ids, attention_mask = [], []
 
-    # create the text pairs for the Character Representations and dataframe rows for saving predictions
-    for obj in data:
-        text_pair = [obj["character"], obj["text"]]
+    # Initialize the lists for the dataset and dataframe rows
+    input_ids_list = []
+    character_masks = []
+    attribute_ixs_list = []
+    labels = []
+    rows = []
+
+    for obj in tqdm.tqdm(data, desc=f"{dataset_name} tokenization", disable=disable_progress_bar):
+
+        # Read sample data
+        character = obj["character"]
+        text = obj["text"]
+        spans = obj["spans"]
+
+        # Initialize input ids and character mask for sample
+        input_ids = []
+        character_mask = []
+
+        prev = 0
+        for start, end in spans:
+
+            # Tokenize the text between spans and the text of the spans separately
+            sub_text = text[prev: start]
+            span_text = text[start: end]
+            sub_text_input_ids = tokenizer(sub_text, padding=False, add_special_tokens=False)["input_ids"]
+            span_text_input_ids = tokenizer(span_text, padding=False, add_special_tokens=False)["input_ids"]
+            input_ids += sub_text_input_ids + span_text_input_ids
+            character_mask += [0] * len(sub_text_input_ids) + [1] * len(span_text_input_ids)
+            prev = end
+
+        # Tokenize the text trailing the last span
+        trailing_text = text[prev:]
+        trailing_text_input_ids = tokenizer(trailing_text, padding=False, add_special_tokens=False)["input_ids"]
+        input_ids += trailing_text_input_ids
+        character_mask += [0] * len(trailing_text_input_ids)
+
+        # Add character name at the start of the text and tokenize it; We do it to follow conventions
+        leading_text_input_ids = tokenizer(character, padding=False, add_special_tokens=False)["input_ids"]
+        character_mask = [1] * len(leading_text_input_ids) + character_mask
+        input_ids_list.append(input_ids)
+        character_masks.append(character_mask)
+
+        # Create the attribute index depending upon the dataset
+        # For Chatter, the attribute index is a single integer pointing to the trope index
+        # For Personet, the attribute index is a list of integers pointing to the traits index
         if dataset_name == "chatter-contexts" or dataset_name == "chatter-segments":
-            row = [obj["key"], obj["character"], obj["attribute-name"], obj["label"]]
+            trope = obj["attribute-name"]
+            attribute_ixs_list.append(tropes_ix[trope])
+            row = [obj["key"], character, trope, obj["label"]]
         else:
-            row = [obj["key"], obj["character"]] + obj["attributes"] + [obj["attributes"][obj["label"]]]
-        text_pairs.append(text_pair)
+            traits = obj["attributes"]
+            attribute_ixs = [traits_ix[trait] for trait in traits]
+            attribute_ixs_list.append(attribute_ixs)
+            row = [obj["key"], character] + traits + [traits[obj["label"]]]
+        labels.append(obj["label"])
         rows.append(row)
 
     # create the dataframe for saving predictions
     if dataset_name == "chatter":
         df = pd.DataFrame(rows, columns=["key", "character", "attribute", "label"])
     else:
-        df = pd.DataFrame(rows, columns=["key", "character"] + [f"attribute-{i + 1}" for i in range(NCLASSES)]
-                          + ["label"])
-
-    # tokenize the text pairs
-    n_batches = int(np.ceil(len(text_pairs)/tokenization_batch_size))
-    for i in tqdm.trange(n_batches, desc=f"{dataset_name} tokenization", disable=disable_progress_bar):
-        batch_text_pairs = text_pairs[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
-        encoding = tokenizer(batch_text_pairs,
-                             padding=False,
-                             add_special_tokens=True,
-                             return_overflowing_tokens=False,
-                             return_length=False)
-        input_ids.extend(encoding["input_ids"])
-        attention_mask.extend(encoding["attention_mask"])
+        df = pd.DataFrame(rows,
+                          columns=["key", "character"] + [f"attribute-{i + 1}" for i in range(NCLASSES)] + ["label"])
 
     # create dataset
-    dataset = Dataset.from_dict({"input_ids": input_ids,
-                                  "attention_mask": attention_mask,
-                                  "labels": df["label"].tolist()})
+    dataset = Dataset.from_dict({"input_ids": input_ids_list,
+                                  "character_mask": character_masks,
+                                  "attribute_ix": attribute_ixs_list,
+                                  "labels": labels})
     return dataset, df
