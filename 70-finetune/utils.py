@@ -7,7 +7,10 @@ import matplotlib.pyplot as plt
 import os
 import pandas as pd
 import torch
-from transformers import TrainerCallback, TrainingArguments, TrainerState, TrainerControl
+from transformers import TrainingArguments
+from transformers import TrainerCallback
+from transformers import TrainerControl
+from transformers import TrainerState
 from typing import List, Dict
 
 # define logging callback class
@@ -15,7 +18,8 @@ class LoggerCallback(TrainerCallback):
     """Callback class to log to file and handle general logging"""
     def __init__(self, experiments_dir):
         super().__init__()
-        logging.get_absl_handler().use_absl_log_file(program_name="train", log_dir=experiments_dir)
+        logging.get_absl_handler().use_absl_log_file(
+            program_name="train", log_dir=experiments_dir)
         logging.get_absl_handler().setFormatter(None)
         self.logs_file = os.path.join(experiments_dir, "logs.jsonl")
         self.logs_writer = jsonlines.open(self.logs_file, mode="w", flush=True)
@@ -33,12 +37,17 @@ class LoggerCallback(TrainerCallback):
         logs["step"] = state.global_step
         self.logs_writer.write(logs)
 
-    def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+    def on_train_end(self,
+                     args: TrainingArguments,
+                     state: TrainerState,
+                     control: TrainerControl,
+                     **kwargs):
         self.logs_writer.close()
 
 def plot_logs(logs: List[Dict[str, float]], metric: str, experiments_dir: str):
-    """plot the train loss, dev loss and dev evaluation metric, and also save a dataframe file containing the same 
-    information
+    """
+    Plot the train loss, dev loss and dev evaluation metric, and also save a 
+    dataframe file containing the same information
     """
     train_loss, train_steps = [], []
     dev_loss, dev_metric, dev_steps = [], [], []
@@ -54,9 +63,12 @@ def plot_logs(logs: List[Dict[str, float]], metric: str, experiments_dir: str):
             dev_steps.append(log["step"])
             rows.append([log["step"], "dev", log["eval_loss"], log[metric]])
     plt.figure(figsize=(25, 12))
-    plt.plot(train_steps, train_loss, color="blue", lw=5, marker="o", ms=15, label="train loss")
-    plt.plot(dev_steps, dev_loss, color="red", lw=5, marker="s", ms=15, label="dev loss")
-    plt.plot(dev_steps, dev_metric, color="green", lw=5, marker="^", ms=15, label=f"dev {metric}")
+    plt.plot(train_steps, train_loss, color="blue", lw=5, marker="o", ms=15,
+             label="train loss")
+    plt.plot(dev_steps, dev_loss, color="red", lw=5, marker="s", ms=15,
+             label="dev loss")
+    plt.plot(dev_steps, dev_metric, color="green", lw=5, marker="^", ms=15,
+             label=f"dev {metric}")
     plt.ylabel("metric")
     plt.xlabel("step")
     plt.legend(fontsize="x-large")
@@ -67,8 +79,11 @@ def plot_logs(logs: List[Dict[str, float]], metric: str, experiments_dir: str):
     df.to_csv(progress_file, index=False)
 
 def release_training_memory(trainer):
-    """Clean up GPU and CPU memory used during training, keeping model + DeepSpeed ZeRO partitions intact for inference.
-    Safe to call between trainer.train() and trainer.predict()."""
+    """
+    Clean up GPU and CPU memory used during training, keeping model + DeepSpeed 
+    ZeRO partitions intact for inference.
+    Safe to call between trainer.train() and trainer.predict().
+    """
 
     # Ensure model exists
     if not hasattr(trainer, "model") or trainer.model is None:

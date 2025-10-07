@@ -62,9 +62,10 @@ $STORY$
 Choose the trait most strongly portrayed or associated with the character "$CHARACTER$" based on the excerpt. """
 
 NCLASSES = 5
-CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN = {250: 1024, 500: 1024, 1000: 2048, 1500: 2048, 2000: 4096}
-PERSONET_SFT_SEQLEN = 1800
-CHATTER_SEGMENTS_SFT_SEQLEN = 14000
+CHATTER_CONTEXTS_WORD_SIZE_TO_SEQLEN = {
+    250: 1024, 500: 1024, 1000: 2048, 1500: 2048, 2000: 4096}
+PERSONET_SEQLEN = 1800
+CHATTER_SEGMENTS_SEQLEN = 14000
 IGNORE_INDEX = -100
 
 def get_dataset_names():
@@ -75,21 +76,31 @@ def get_dataset_names():
             dataset_names.append(f"chatter-segments-{preprocess}-{partition}")
             for truncation_strategy in ["first", "semantic"]:
                 for size in [250, 500, 1000, 1500, 2000]:
-                    dataset_names.append(f"chatter-contexts-{preprocess}-{truncation_strategy}-{size}-{partition}")
+                    dataset_names.append(
+                        f"chatter-contexts-{preprocess}-"
+                        f"{truncation_strategy}-{size}-{partition}")
     return dataset_names
 
-def load_chatter_contexts(truncation_strategy: Literal["first", "semantic"] = "first",
-                          size_in_words: Literal[250, 500, 1000, 1500, 2000] = 2000,
-                          anonymize = False,
-                          partitions = ["train", "dev", "test"]):
+def load_chatter_contexts(
+        truncation_strategy: Literal["first", "semantic"] = "first",
+        size_in_words: Literal[250, 500, 1000, 1500, 2000] = 2000,
+        anonymize = False,
+        partitions = ["train", "dev", "test"]):
     """Load chatter contexts data"""
     # get contexts file
     contexts_dir = "anonymized-contexts" if anonymize else "contexts"
     if truncation_strategy == "first":
-        contexts_file = os.path.join(DATADIR, "CHATTER", contexts_dir, f"25P-{size_in_words}C-first.jsonl")
+        contexts_file = os.path.join(
+            DATADIR,
+            "CHATTER",
+            contexts_dir,
+            f"25P-{size_in_words}C-first.jsonl")
     else:
-        contexts_file = os.path.join(DATADIR, "CHATTER", contexts_dir,
-                                     f"25P-{size_in_words}C-all-mpnet-base-v2-0.05NEG-0.05POS.jsonl")
+        contexts_file = os.path.join(
+            DATADIR,
+            "CHATTER",
+            contexts_dir,
+            f"25P-{size_in_words}C-all-mpnet-base-v2-0.05NEG-0.05POS.jsonl")
 
     # read contexts data
     with jsonlines.open(contexts_file) as reader:
@@ -100,15 +111,16 @@ def load_chatter_contexts(truncation_strategy: Literal["first", "semantic"] = "f
     if truncation_strategy == "semantic":
         for obj in data:
             if obj["partition"] in partitions:
-                processed_data.append({"key": f"{obj['character']}-{obj['trope']}",
-                                    "docid": obj["imdbid"],
-                                    "character": "CHARACTER" + obj["character"][1:] if anonymize else obj["name"],
-                                    "attribute-name": obj["trope"],
-                                    "attribute-definition": obj["definition"],
-                                    "text": obj["text"],
-                                    "spans": obj["spans"],
-                                    "label": obj["label"],
-                                    "partition": obj["partition"]})
+                processed_data.append({
+                    "key": f"{obj['character']}-{obj['trope']}",
+                    "docid": obj["imdbid"],
+                    "character": "CHARACTER" + obj["character"][1:] if anonymize else obj["name"],
+                    "attribute-name": obj["trope"],
+                    "attribute-definition": obj["definition"],
+                    "text": obj["text"],
+                    "spans": obj["spans"],
+                    "label": obj["label"],
+                    "partition": obj["partition"]})
     else:
         label_file = os.path.join(DATADIR, "CHATTER/chatter.csv")
         tropes_file = os.path.join(DATADIR, "CHATTER/tropes.csv")
@@ -121,28 +133,37 @@ def load_chatter_contexts(truncation_strategy: Literal["first", "semantic"] = "f
             characterid_to_ixs[characterid].append(i)
         for _, row in tropes_df.iterrows():
             trope_to_definition[row["trope"]] = row["summary"]
-        for _, row in label_df[label_df["partition"].isin(partitions)].iterrows():
-            characterid, trope, partition = row["character"], row["trope"], row["partition"]
+        for _, row in label_df[
+                label_df["partition"].isin(partitions)].iterrows():
+            characterid, trope, partition = (
+                row["character"], row["trope"], row["partition"])
             definition = trope_to_definition[trope]
             label = row["label"] if partition == "test" else row["tvtrope-label"]
             label = int(label)
             for i in characterid_to_ixs[characterid]:
                 obj = data[i]
-                processed_data.append({"key": f"{characterid}-{trope}",
-                                    "docid": obj["imdbid"],
-                                    "character": "CHARACTER"+obj["character"][1:] if anonymize else obj["name"],
-                                    "attribute-name": trope,
-                                    "attribute-definition": definition,
-                                    "text": obj["text"],
-                                    "spans": obj["spans"],
-                                    "label": label,
-                                    "partition": partition})
+                processed_data.append({
+                    "key": f"{characterid}-{trope}",
+                    "docid": obj["imdbid"],
+                    "character": "CHARACTER"+obj["character"][1:] if anonymize else obj["name"],
+                    "attribute-name": trope,
+                    "attribute-definition": definition,
+                    "text": obj["text"],
+                    "spans": obj["spans"],
+                    "label": label,
+                    "partition": partition})
     return processed_data
 
-def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test"]):
-    """Load chatter segments data"""
+def load_chatter_segments(
+        anonymize = False,
+        partitions = ["train", "dev", "test"]):
+    """
+    Load chatter segments data
+    """
     # get file paths
-    segments_dir = os.path.join(DATADIR, "CHATTER", "anonymized-segments" if anonymize else "segments")
+    segments_dir = os.path.join(
+        DATADIR, "CHATTER",
+        "anonymized-segments" if anonymize else "segments")
     map_file = os.path.join(DATADIR, "CHATTER/character-movie-map.csv")
     label_file = os.path.join(DATADIR, "CHATTER/chatter.csv")
     tropes_file = os.path.join(DATADIR, "CHATTER/tropes.csv")
@@ -162,12 +183,18 @@ def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test
         trope_to_definition[row.trope] = row.summary
     for characterid, character_df in map_df.groupby("character"):
         characterid_to_imdbids[characterid] = character_df["imdb-id"].tolist()
-        for imdbid, name in character_df[["imdb-id", "name"]].itertuples(index=False, name=None):
+        for imdbid, name in (character_df[["imdb-id", "name"]]
+                             .itertuples(index=False, name=None)):
             characterid_and_imdbid_to_name[(characterid, imdbid)] = name
-            segment_file = os.path.join(segments_dir, f"{characterid}-{imdbid}.txt")
-            spans_file = os.path.join(segments_dir, f"{characterid}-{imdbid}-spans.txt")
+            segment_file = os.path.join(
+                segments_dir,
+                f"{characterid}-{imdbid}.txt")
+            spans_file = os.path.join(
+                segments_dir,
+                f"{characterid}-{imdbid}-spans.txt")
             if os.path.exists(segment_file):
-                characterid_and_imdbid_to_segment[(characterid, imdbid)] = open(segment_file).read().strip()
+                characterid_and_imdbid_to_segment[(characterid, imdbid)] = (
+                    open(segment_file).read().strip())
                 spans = []
                 with open(spans_file) as fr:
                     for line in fr:
@@ -178,27 +205,32 @@ def load_chatter_segments(anonymize = False, partitions = ["train", "dev", "test
     # process data
     processed_data = []
     for _, row in label_df[label_df["partition"].isin(partitions)].iterrows():
-        characterid, trope, partition = row["character"], row["trope"], row["partition"]
+        characterid, trope, partition = (
+            row["character"], row["trope"], row["partition"])
         definition = trope_to_definition[trope]
         label = row["label"] if partition == "test" else row["tvtrope-label"]
         label = int(label)
         for imdbid in characterid_to_imdbids[characterid]:
             if (characterid, imdbid) in characterid_and_imdbid_to_segment:
-                name = ("CHARACTER" + characterid[1:]
-                        if anonymize else characterid_and_imdbid_to_name[(characterid, imdbid)])
-                processed_data.append({"key": f"{characterid}-{trope}",
-                                       "docid": imdbid,
-                                       "character": name,
-                                       "attribute-name": trope,
-                                       "attribute-definition": definition,
-                                       "text": characterid_and_imdbid_to_segment[(characterid, imdbid)],
-                                       "spans": characterid_and_imdbid_to_spans[(characterid, imdbid)],
-                                       "label": label,
-                                       "partition": partition})
+                name = (
+                    "CHARACTER" + characterid[1:]
+                    if anonymize else characterid_and_imdbid_to_name[(characterid, imdbid)])
+                processed_data.append({
+                    "key": f"{characterid}-{trope}",
+                    "docid": imdbid,
+                    "character": name,
+                    "attribute-name": trope,
+                    "attribute-definition": definition,
+                    "text": characterid_and_imdbid_to_segment[(characterid, imdbid)],
+                    "spans": characterid_and_imdbid_to_spans[(characterid, imdbid)],
+                    "label": label,
+                    "partition": partition})
     return processed_data
 
 def load_personet():
-    """Load personet data"""
+    """
+    Load personet data
+    """
     personet_dir = os.path.join(DATADIR, "PERSONET")
     with jsonlines.open(os.path.join(personet_dir, "test.jsonl")) as reader:
         test_data = list(reader)
@@ -216,27 +248,38 @@ def load_personet():
     for obj in test_data + train_data + dev_data:
         traits = obj["options"]
         answer = ord(obj["answer"][1]) - ord("a")
-        text = "\n".join([obj["history"], obj["snippet_former_context"], obj["snippet_underlined"],
-                          obj["snippet_post_context"]])
+        text = "\n".join(
+            [obj["history"],
+             obj["snippet_former_context"],
+             obj["snippet_underlined"],
+             obj["snippet_post_context"]])
         key = f"{obj['character']}-{traits[answer]}"
-        processed_obj = {"key": key,
-                         "docid": obj["book_name"],
-                         "character": obj["character"],
-                         "attributes": traits,
-                         "text": text,
-                         "spans": [], # TODO: populate this
-                         "label": answer,
-                         "partition": obj["partition"]}
+        processed_obj = {
+            "key": key,
+            "docid": obj["book_name"],
+            "character": obj["character"],
+            "attributes": traits,
+            "text": text,
+            "spans": [], # TODO: populate this
+            "label": answer,
+            "partition": obj["partition"]}
         processed_data.append(processed_obj)
     return processed_data
 
-def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
-                       tokenizer: AutoTokenizer,
-                       dataset_name: Literal["chatter-contexts", "chatter-segments", "personet"] = "chatter-contexts",
-                       chatter_contexts_size_in_words: Literal[250, 500, 1000, 1500, 2000] = 2000,
-                       tokenization_batch_size = 4096,
-                       disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
-    """Create SFT Dataset and evaluation dataframe from data array"""
+def create_sft_dataset(
+        data: List[Dict[str, Union[str, int]]],
+        tokenizer: AutoTokenizer,
+        dataset_name: Literal[
+            "chatter-contexts",
+            "chatter-segments",
+            "personet"] = "chatter-contexts",
+        chatter_contexts_size_in_words: Literal[
+            250, 500, 1000, 1500, 2000] = 2000,
+        tokenization_batch_size = 4096,
+        disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
+    """
+    Create SFT Dataset and evaluation dataframe from data array
+    """
     rows = []
     prompts = []
     completions = []
@@ -249,71 +292,124 @@ def create_sft_dataset(data: List[Dict[str, Union[str, int]]],
                       .replace("$CHARACTER$", obj["character"])
                       .replace("$TROPE_DEFINITION$", obj["attribute-definition"])
                       .replace("$STORY$", obj["text"]))
-            messages = [{"role": "system", "content": SYSTEM_MESSAGE}, {"role": "user", "content": prompt}]
-            prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            messages = [
+                {"role": "system",
+                 "content": SYSTEM_MESSAGE},
+                {"role": "user",
+                 "content": prompt}]
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False)
             completion = "yes" if obj["label"] == 1 else "no"
-            row = [obj["key"], obj["character"], obj["attribute-name"], obj["label"]]
+            row = [
+                obj["key"],
+                obj["character"],
+                obj["attribute-name"],
+                obj["label"]]
         else:
             prompt = PERSONET_TEMPLATE
             for i in range(NCLASSES):
-                prompt = prompt.replace(f"$ATTRIBUTE{i + 1}$", obj["attributes"][i])
-            prompt = prompt.replace("$CHARACTER$", obj["character"]).replace("$STORY$", obj["text"])
-            messages = [{"role": "system", "content": SYSTEM_MESSAGE}, {"role": "user", "content": prompt}]
-            prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+                prompt = prompt.replace(
+                    f"$ATTRIBUTE{i + 1}$", obj["attributes"][i])
+            prompt = (
+                prompt
+                .replace("$CHARACTER$", obj["character"])
+                .replace("$STORY$", obj["text"]))
+            messages = [
+                {"role": "system", "content": SYSTEM_MESSAGE},
+                {"role": "user", "content": prompt}]
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False)
             completion = obj["attributes"][obj["label"]]
-            row = [obj["key"], obj["character"]] + obj["attributes"] + [obj["attributes"][obj["label"]]]
+            row = ([
+                obj["key"],
+                obj["character"]]
+                + obj["attributes"]
+                + [obj["attributes"][obj["label"]]])
         prompts.append(prompt)
         completions.append(completion)
         rows.append(row)
     
     # create the dataframe for saving predictions
     if dataset_name == "chatter-contexts" or dataset_name == "chatter-segments":
-        df = pd.DataFrame(rows, columns=["key", "character", "attribute", "label"])
+        df = pd.DataFrame(
+            rows,
+            columns=["key", "character", "attribute", "label"])
     else:
-        df = pd.DataFrame(rows, columns=["key", "character"] + [f"attribute-{i + 1}" for i in range(NCLASSES)]
-                          + ["label"])
+        df = pd.DataFrame(
+            rows,
+            columns=(
+                ["key", "character"]
+                + [f"attribute-{i + 1}" for i in range(NCLASSES)]
+                + ["label"]))
 
     # tokenize the texts
     prompt_ids = []
     completion_ids = []
     n_batches = int(np.ceil(len(prompts)/tokenization_batch_size))
-    for i in tqdm.trange(n_batches, desc=f"{dataset_name} tokenization", disable=disable_progress_bar):
-        batch_prompts = prompts[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
-        batch_completions = completions[tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
-        prompt_ids += tokenizer(batch_prompts, padding=False, add_special_tokens=False)["input_ids"]
-        completion_ids += tokenizer(batch_completions, padding=False, add_special_tokens=False)["input_ids"]
+    for i in tqdm.trange(
+            n_batches,
+            desc=f"{dataset_name} tokenization",
+            disable=disable_progress_bar):
+        batch_prompts = prompts[
+            tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
+        batch_completions = completions[
+            tokenization_batch_size * i: tokenization_batch_size * (i + 1)]
+        prompt_ids += tokenizer(
+            batch_prompts,
+            padding=False,
+            add_special_tokens=False)["input_ids"]
+        completion_ids += tokenizer(
+            batch_completions,
+            padding=False,
+            add_special_tokens=False)["input_ids"]
 
     # find maximum sft sequence length
     if dataset_name == "chatter-contexts":
-        maxlen = CHATTER_CONTEXTS_WORD_SIZE_TO_SFT_SEQLEN[chatter_contexts_size_in_words]
+        maxlen = (
+            CHATTER_CONTEXTS_WORD_SIZE_TO_SEQLEN[chatter_contexts_size_in_words])
     elif dataset_name == "chatter-segments":
-        maxlen = CHATTER_SEGMENTS_SFT_SEQLEN
+        maxlen = CHATTER_SEGMENTS_SEQLEN
     else:
-        maxlen = PERSONET_SFT_SEQLEN
+        maxlen = PERSONET_SEQLEN
 
     # find input ids and label ids
     input_ids = []
     label_ids = []
-    for sample_prompt_ids, sample_completion_ids in tqdm.tqdm(zip(prompt_ids, completion_ids),
-                                                              total=len(prompt_ids),
-                                                              desc=f"{dataset_name} truncation",
-                                                              disable=disable_progress_bar):
+    for sample_prompt_ids, sample_completion_ids in tqdm.tqdm(
+            zip(prompt_ids, completion_ids),
+            total=len(prompt_ids),
+            desc=f"{dataset_name} truncation",
+            disable=disable_progress_bar):
         if len(sample_prompt_ids) > maxlen - len(sample_completion_ids):
-            sample_prompt_ids = sample_prompt_ids[: maxlen - len(sample_completion_ids)]
+            sample_prompt_ids = sample_prompt_ids[
+                : maxlen - len(sample_completion_ids)]
         input_ids.append(sample_prompt_ids + sample_completion_ids)
-        label_ids.append([IGNORE_INDEX] * len(sample_prompt_ids) + sample_completion_ids)
+        label_ids.append(
+            [IGNORE_INDEX] * len(sample_prompt_ids) + sample_completion_ids)
 
     # create dataset
-    dataset = Dataset.from_dict({"input_ids": input_ids, "labels": label_ids})
+    dataset = Dataset.from_dict(
+        {"input_ids": input_ids,
+         "labels": label_ids})
     return dataset, df
 
-def create_crm_dataset(data: List[Dict[str, Union[str, int, List[List[int]]]]],
-                       tropes_ix: Dict[str, int],
-                       traits_ix: Dict[str, int],
-                       tokenizer: AutoTokenizer,
-                       dataset_name: Literal["chatter-contexts", "chatter-segments", "personet"] = "chatter-contexts",
-                       disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
-    """Create Character Representations Dataset and evaluation dataframe from data array"""
+def create_crm_dataset(
+        data: List[Dict[str, Union[str, int, List[List[int]]]]],
+        tropes_ix: Dict[str, int],
+        traits_ix: Dict[str, int],
+        tokenizer: AutoTokenizer,
+        dataset_name: Literal[
+            "chatter-contexts",
+            "chatter-segments",
+            "personet"] = "chatter-contexts",
+        disable_progress_bar = False) -> Tuple[Dataset, pd.DataFrame]:
+    """
+    Create Character Representations Dataset and evaluation dataframe from data array
+    """
 
     # Initialize the lists for the dataset and dataframe rows
     input_ids_list = []
@@ -322,7 +418,10 @@ def create_crm_dataset(data: List[Dict[str, Union[str, int, List[List[int]]]]],
     labels = []
     rows = []
 
-    for obj in tqdm.tqdm(data, desc=f"{dataset_name} tokenization", disable=disable_progress_bar):
+    for obj in tqdm.tqdm(
+            data,
+            desc=f"{dataset_name} tokenization",
+            disable=disable_progress_bar):
 
         # Read sample data
         character = obj["character"]
@@ -336,30 +435,45 @@ def create_crm_dataset(data: List[Dict[str, Union[str, int, List[List[int]]]]],
         prev = 0
         for start, end in spans:
 
-            # Tokenize the text between spans and the text of the spans separately
+            # Tokenize the text between spans and the text of the 
+            # spans separately
             sub_text = text[prev: start]
             span_text = text[start: end]
-            sub_text_input_ids = tokenizer(sub_text, padding=False, add_special_tokens=False)["input_ids"]
-            span_text_input_ids = tokenizer(span_text, padding=False, add_special_tokens=False)["input_ids"]
+            sub_text_input_ids = tokenizer(
+                sub_text, padding=False,
+                add_special_tokens=False)["input_ids"]
+            span_text_input_ids = tokenizer(
+                span_text, padding=False,
+                add_special_tokens=False)["input_ids"]
             input_ids += sub_text_input_ids + span_text_input_ids
-            character_mask += [0] * len(sub_text_input_ids) + [1] * len(span_text_input_ids)
+            character_mask += ([0] * len(sub_text_input_ids)
+                               + [1] * len(span_text_input_ids))
             prev = end
 
         # Tokenize the text trailing the last span
         trailing_text = text[prev:]
-        trailing_text_input_ids = tokenizer(trailing_text, padding=False, add_special_tokens=False)["input_ids"]
+        trailing_text_input_ids = tokenizer(
+            trailing_text,
+            padding=False,
+            add_special_tokens=False)["input_ids"]
         input_ids += trailing_text_input_ids
         character_mask += [0] * len(trailing_text_input_ids)
 
-        # Add character name at the start of the text and tokenize it; We do it to follow conventions
-        leading_text_input_ids = tokenizer(character, padding=False, add_special_tokens=False)["input_ids"]
+        # Add character name at the start of the text and tokenize it; 
+        # We do it to follow conventions
+        leading_text_input_ids = tokenizer(
+            character,
+            padding=False,
+            add_special_tokens=False)["input_ids"]
         character_mask = [1] * len(leading_text_input_ids) + character_mask
         input_ids_list.append(input_ids)
         character_masks.append(character_mask)
 
         # Create the attribute index depending upon the dataset
-        # For Chatter, the attribute index is a single integer pointing to the trope index
-        # For Personet, the attribute index is a list of integers pointing to the traits index
+        # For Chatter, the attribute index is a single integer pointing to 
+        # the trope index
+        # For Personet, the attribute index is a list of integers pointing to 
+        # the traits index
         if dataset_name == "chatter-contexts" or dataset_name == "chatter-segments":
             trope = obj["attribute-name"]
             attribute_ixs_list.append(tropes_ix[trope])
@@ -374,14 +488,21 @@ def create_crm_dataset(data: List[Dict[str, Union[str, int, List[List[int]]]]],
 
     # create the dataframe for saving predictions
     if dataset_name == "chatter":
-        df = pd.DataFrame(rows, columns=["key", "character", "attribute", "label"])
+        df = pd.DataFrame(
+            rows,
+            columns=["key", "character", "attribute", "label"])
     else:
-        df = pd.DataFrame(rows,
-                          columns=["key", "character"] + [f"attribute-{i + 1}" for i in range(NCLASSES)] + ["label"])
+        df = pd.DataFrame(
+            rows,
+            columns=(
+                ["key", "character"]
+                + [f"attribute-{i + 1}" for i in range(NCLASSES)] + ["label"]))
 
     # create dataset
-    dataset = Dataset.from_dict({"input_ids": input_ids_list,
-                                  "character_mask": character_masks,
-                                  "attribute_ix": attribute_ixs_list,
-                                  "labels": labels})
+    dataset = Dataset.from_dict(
+        {"input_ids": input_ids_list,
+         "character_mask": character_masks,
+         "attribute_ix": attribute_ixs_list,
+         "labels": labels})
+
     return dataset, df
