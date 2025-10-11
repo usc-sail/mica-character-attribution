@@ -110,6 +110,10 @@ flags.DEFINE_integer(
     default=None,
     help=("number of prediction steps to accumulate the output tensors for, "
           "before moving to CPU"))
+flags.DEFINE_bool(
+    "eval_on_start",
+    default=False,
+    help="Evaluate dev set at the start of training")
 flags.DEFINE_integer(
     "eval_delay",
     default=None,
@@ -210,6 +214,7 @@ def log_arguments():
     logging.info(f"{'eval-batch-size':30s} = {FLAGS.eval_batch_size}")
     logging.info(
         f"{'eval-accumulation-steps':30s} = {FLAGS.eval_accumulation_steps}")
+    logging.info(f"{'eval-on-start':30s} = {FLAGS.eval_on_start}")
     logging.info(f"{'eval-delay':30s} = {FLAGS.eval_delay}")
     logging.info(f"{'eval-steps':30s} = {FLAGS.eval_steps}")
 

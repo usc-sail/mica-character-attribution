@@ -8,6 +8,7 @@ from absl import logging
 from accelerate import PartialState
 import json
 import jsonlines
+import math
 import numpy as np
 import os
 from peft import LoraConfig
@@ -161,6 +162,7 @@ def train(
     sft_config = SFTConfig(
         output_dir=experiments_dir,
         max_length=None,
+        eval_on_start=FLAGS.eval_on_start,
         eval_strategy="steps" if FLAGS.eval else "no",
         eval_steps=FLAGS.eval_steps,
         eval_delay=FLAGS.eval_delay,
@@ -320,6 +322,51 @@ def predict(
             tokenization_batch_size=FLAGS.tokenization_batch_size,
             disable_progress_bar=not partial_state.is_local_main_process)
         dataset_name_to_dataset_and_df[dataset_name] = (dataset, df)
+
+    for dataset_name, (dataset, df) in dataset_name_to_dataset_and_df.items():
+        log(f"evaluating {dataset_name}")
+        matched_dataset_name = re.match(
+            "(chatter-contexts)|(chatter-segments)|(personet)",
+            dataset_name).group(0)
+        with partial_state.split_between_processes(
+                dataset, apply_padding=True) as process_dataset:
+            n_batches = math.ceil(
+                len(process_dataset)/FLAGS.prediction_batch_size)
+            process_responses = []
+            for i in range(n_batches):
+                batch_dataset = process_dataset[
+                    i * FLAGS.prediction_batch_size:
+                    (i + 1) * FLAGS.prediction_batch_size]
+                batch_input_ids = batch_dataset["input_ids"]
+                maxlen = max(map(len, batch_input_ids))
+                padded_batch_input_ids = []
+                
+                batch_encoding = (self
+                                    .tokenizer(batch_prompts,
+                                                padding="max_length" if FLAGS.max_input_tokens is not None else "longest",
+                                                truncation=FLAGS.max_input_tokens is not None,
+                                                return_tensors="pt",
+                                                max_length=((1 << 10) * FLAGS.max_input_tokens 
+                                                            if FLAGS.max_input_tokens is not None else None))
+                                    .to(self.partial_state.device))
+                batch_output = self.model.generate(**batch_encoding,
+                                                    do_sample=FLAGS.do_sample,
+                                                    top_k=FLAGS.top_k,
+                                                    top_p=FLAGS.top_p,
+                                                    temperature=FLAGS.temperature,
+                                                    max_new_tokens=FLAGS.max_output_tokens,
+                                                    pad_token_id=self.tokenizer.pad_token_id,
+                                                    return_legacy_cache=True)
+                batch_output = batch_output[:, batch_encoding["input_ids"].shape[1]:]
+                batch_responses = self.tokenizer.batch_decode(batch_output, skip_special_tokens=True)
+                process_responses.extend(batch_responses)
+                print(f"PROCESS {self.partial_state.process_index}: Batch {i + 1} / {n_batches} done")
+                self.partial_state.wait_for_everyone()
+            responses = [process_responses]
+        responses_arr = gather_object(responses)
+        responses = [response for responses in responses_arr for response in responses]
+        responses = responses[:len(prompts)]
+        return responses
 
     # instantiate trainer; only used for prediction here
     log("instantiating trainer")

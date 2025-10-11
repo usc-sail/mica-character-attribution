@@ -1,0 +1,30 @@
+PERSONET_TEMPLATE = """Character traits are adjective words used to describe a character's personality.
+
+Given below is an excerpt from a book where the character "$CHARACTER$" speaks or is mentioned. Read the excerpt carefully and based on that choose exactly one trait from the list of traits which is mostly strongly portrayed or associated with the character "$CHARACTER$". Do not use synonyms or paraphrases for the trait. Answer based only on the excerpt. Do not rely on your prior knowledge.
+
+Book Excerpt:
+$STORY$
+
+Out of the traits -- "$ATTRIBUTE1$", "$ATTRIBUTE2$", "$ATTRIBUTE3$", "$ATTRIBUTE4$", and "$ATTRIBUTE5$" -- choose exactly one trait most strongly portrayed or associated with the character "$CHARACTER$" based on the above excerpt. Your answer should contain only one word. """
+
+
+
+
+
+
+
+PERSONET_TEMPLATE = """Character traits are adjectives used to describe a character's personality. Given below are a list of some character traits and an excerpt from a book where the character "$CHARACTER$" speaks or is mentioned.
+
+Read the excerpt carefully and based on that choose the index of the trait from the list of traits which is mostly strongly portrayed or associated with the character "$CHARACTER$". For example, if the traits are 1. "cute", 2. "angry", 3. "brave", 4. "strong", and 5. "happy", and the character most strongly portrays being brave, then answer "3". Answer based only on the excerpt. Do not rely on your prior knowledge.
+
+Traits:
+1. $ATTRIBUTE1$
+2. $ATTRIBUTE2$
+3. $ATTRIBUTE3$
+4. $ATTRIBUTE4$
+5. $ATTRIBUTE5$
+
+Book Excerpt:
+$STORY$
+
+Choose the index of the trait most strongly portrayed or associated with the character "$CHARACTER$" based on the excerpt. """

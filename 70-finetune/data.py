@@ -43,23 +43,20 @@ $STORY$
 
     
 Does the character "$CHARACTER$" portray or is associated with the $TROPE$ trope in the above movie script segments?
-Answer yes or no. """
+Answer yes or no. 
 
-PERSONET_TEMPLATE = """Character traits are single-word adjectives used to describe a character's personality. Given below are a list of some character traits and an excerpt from a book where the character "$CHARACTER$" speaks or is mentioned.
+Answer: """
 
-Read the excerpt carefully and based on that choose exactly one trait from the list of traits which is mostly strongly portrayed or associated with the character "$CHARACTER$". Do not use synonyms or paraphrases for the trait. Answer based only on the excerpt. Do not rely on your prior knowledge.
+PERSONET_TEMPLATE = """Character traits are adjective words used to describe a character's personality.
 
-Traits:
-- $ATTRIBUTE1$
-- $ATTRIBUTE2$
-- $ATTRIBUTE3$
-- $ATTRIBUTE4$
-- $ATTRIBUTE5$
+Given below is an excerpt from a book where the character "$CHARACTER$" speaks or is mentioned. Read the excerpt carefully and based on that choose exactly one trait from the list of traits which is mostly strongly portrayed or associated with the character "$CHARACTER$". Do not use synonyms or paraphrases for the trait. Answer based only on the excerpt. Do not rely on your prior knowledge.
 
 Book Excerpt:
 $STORY$
 
-Choose the trait most strongly portrayed or associated with the character "$CHARACTER$" based on the excerpt. """
+Out of the traits -- "$ATTRIBUTE1$", "$ATTRIBUTE2$", "$ATTRIBUTE3$", "$ATTRIBUTE4$", and "$ATTRIBUTE5$" -- choose exactly one trait most strongly portrayed or associated with the character "$CHARACTER$" based on the above excerpt. Your answer should contain only one word. 
+
+Answer: """
 
 NCLASSES = 5
 CHATTER_CONTEXTS_WORD_SIZE_TO_SEQLEN = {
@@ -247,6 +244,7 @@ def load_personet():
     processed_data = []
     for obj in test_data + train_data + dev_data:
         traits = obj["options"]
+        traits = [trait.strip().lower() for trait in traits]
         answer = ord(obj["answer"][1]) - ord("a")
         text = "\n".join(
             [obj["history"],
@@ -292,15 +290,7 @@ def create_sft_dataset(
                       .replace("$CHARACTER$", obj["character"])
                       .replace("$TROPE_DEFINITION$", obj["attribute-definition"])
                       .replace("$STORY$", obj["text"]))
-            messages = [
-                {"role": "system",
-                 "content": SYSTEM_MESSAGE},
-                {"role": "user",
-                 "content": prompt}]
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=False)
+            prompt = f"{SYSTEM_MESSAGE}\n\n{prompt}"
             completion = "yes" if obj["label"] == 1 else "no"
             row = [
                 obj["key"],
@@ -316,13 +306,7 @@ def create_sft_dataset(
                 prompt
                 .replace("$CHARACTER$", obj["character"])
                 .replace("$STORY$", obj["text"]))
-            messages = [
-                {"role": "system", "content": SYSTEM_MESSAGE},
-                {"role": "user", "content": prompt}]
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=False)
+            prompt = f"{SYSTEM_MESSAGE}\n\n{prompt}"
             completion = obj["attributes"][obj["label"]]
             row = ([
                 obj["key"],

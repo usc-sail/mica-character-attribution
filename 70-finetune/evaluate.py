@@ -67,21 +67,22 @@ class ComputeMetrics:
 
         # function to codify label text
         def convert_label_text_to_label(row):
-            label_text = row["pred-text"]
-            if self.dataset == "chatter-contexts" or self.dataset == "chatter-segments":
-                if label_text == "yes":
-                    return 1
-                elif label_text == "no":
-                    return 0
-                else:
-                    return np.nan
+            if (self.dataset == "chatter-contexts"
+                    or self.dataset == "chatter-segments"):
+                mobj = re.search(r"\w+", row["pred-text"])
+                if mobj is not None:
+                    label_text = mobj.group(0)
+                    if label_text == "yes":
+                        return 1
+                    elif label_text == "no":
+                        return 0
             else:
-                attribute_texts = [
-                    row[f"attribute-{i + 1}"] for i in range(data.NCLASSES)]
-                if label_text in attribute_texts:
-                    return label_text
-                else:
-                    return ""
+                traits = [row[f"attribute-{i + 1}"]
+                            for i in range(data.NCLASSES)]
+                for word in row["pred-text"].split():
+                    if word in traits:
+                        return word
+            return np.nan
 
         label_ids = evalprediction.label_ids
         prediction_ids = evalprediction.predictions
@@ -94,11 +95,6 @@ class ComputeMetrics:
                 sample_completion_ids != data.IGNORE_INDEX]
             sample_prediction_text = self.tokenizer.decode(
                 sample_completion_ids, skip_special_tokens=True).lower()
-            pattern_match = re.search("\w+", sample_prediction_text)
-            if pattern_match is not None:
-                sample_prediction_text = pattern_match.group(0)
-            else:
-                sample_prediction_text = ""
             prediction_texts.append(sample_prediction_text)
         self.eval_df["pred-text"] = prediction_texts
         self.eval_df["pred"] = self.eval_df.apply(

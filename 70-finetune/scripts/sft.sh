@@ -21,10 +21,11 @@ train.py \
 --gradient_accumulation_steps 2 \
 --gradient_checkpointing \
 --eval_batch_size 4 \
---noeval \
---eval_delay 512 \
---eval_steps 64 \
---logging_steps 32 \ 
+--eval \
+--eval_delay 0 \
+--eval_on_start \
+--eval_steps 32 \
+--logging_steps 16 \ 
 --save_model \
 --alsologtostderr \
 --noshowprefixforinfo"
@@ -41,19 +42,19 @@ predict.py \
 
 if [[ "$1" == "train" ]]; then
 
-    # train on chatter-contexts-semantic
-    $TRAIN \
-    --train_dataset chatter-contexts \
-    --chatter_truncation_strategy semantic \
-    --chatter_size 2000 \
-    --train_steps 1024
+    # # train on chatter-contexts-semantic
+    # $TRAIN \
+    # --train_dataset chatter-contexts \
+    # --chatter_truncation_strategy semantic \
+    # --chatter_size 2000 \
+    # --train_steps 1024
 
-    # train on chatter-contexts-first
-    $TRAIN \
-    --train_dataset chatter-contexts \
-    --chatter_truncation_strategy first \
-    --chatter_size 2000 \
-    --train_steps 1024
+    # # train on chatter-contexts-first
+    # $TRAIN \
+    # --train_dataset chatter-contexts \
+    # --chatter_truncation_strategy first \
+    # --chatter_size 2000 \
+    # --train_steps 1024
 
     # train on personet
     $TRAIN \

@@ -1,8 +1,11 @@
 #!/bin/bash
 
-ANONYMIZES=("" "no")
-WORDS=(250 500 1000 1500 2000)
-SIMS=(0.05 0.1 0.15 0.2)
+# ANONYMIZES=("" "no")
+ANONYMIZES=("no")
+# WORDS=(250 500 1000 1500 2000)
+WORDS=(2000)
+# SIMS=(0.05 0.1 0.15 0.2)
+SIMS=(0.05)
 
 for ANONYMIZE in "${ANONYMIZES[@]}"; do
     for WORD in "${WORDS[@]}"; do
