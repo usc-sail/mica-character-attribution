@@ -68,7 +68,8 @@ else
     --dataset chatter-segments-anonymized-test \
     --dataset chatter-segments-original-test \
     --modelpath $1 \
-    --prediction_batch_size 1
+    --prediction_batch_size 1 \
+    --max_output_tokens 5
 
     # predict on chatter-contexts & personet
     $PREDICT \
@@ -79,6 +80,7 @@ else
     --dataset personet-dev \
     --dataset personet-test \
     --modelpath $1 \
-    --prediction_batch_size 4
+    --prediction_batch_size 4 \
+    --max_output_tokens 10
 
 fi

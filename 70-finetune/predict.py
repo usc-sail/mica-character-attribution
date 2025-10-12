@@ -8,6 +8,7 @@ from absl import flags
 from accelerate import PartialState
 import collections
 
+# Dataset arguments
 flags.DEFINE_multi_enum(
     "dataset",
     default=[],
@@ -17,6 +18,8 @@ flags.DEFINE_integer(
     "tokenization_batch_size",
     default=4096,
     help="batch size for tokenization")
+
+# Model arguments
 flags.DEFINE_enum(
     "model",
     default="sft",
@@ -31,14 +34,8 @@ flags.DEFINE_string(
     default=None,
     help="path to trained model",
     required=True)
-flags.DEFINE_integer(
-    "prediction_batch_size",
-    default=1,
-    help="prediction batch size")
 flags.DEFINE_bool(
-    "bf16",
-    default=False,
-    help="use brain floating point (default=fp16)")
+    "bf16", default=False, help="use brain floating point (default=fp16)")
 flags.DEFINE_bool("load_4bit", default=False, help="load model in 4-bit")
 flags.DEFINE_bool("load_8bit", default=False, help="load model in 8-bit")
 flags.DEFINE_enum(
@@ -46,6 +43,28 @@ flags.DEFINE_enum(
     default="sdpa",
     enum_values=["flash_attention_2", "sdpa", "eager"],
     help="attention implementation")
+
+# Generation arguments
+flags.DEFINE_integer(
+    "prediction_batch_size", default=1, help="prediction batch size")
+flags.DEFINE_integer(
+    "max_output_tokens", default=1, help="maximum tokens to generate")
+flags.DEFINE_bool(
+    "do_sample",
+    default=False,
+    help="use sampling; otherwise use greedy decoding")
+flags.DEFINE_integer(
+    "top_k",
+    default=None,
+    help=("number of highest probability vocabulary tokens to keep for top-k "
+          "filtering"))
+flags.DEFINE_float(
+    "top_p",
+    default=None,
+    help=("If set to float < 1, only the smallest set of most probable tokens "
+          "with probabilities that add up to top_p or higher are kept for "
+          "generation"))
+flags.DEFINE_float("temperature", default=1, help="temperature for generations")
 
 FLAGS = flags.FLAGS
 PARTIALSTATE = PartialState()

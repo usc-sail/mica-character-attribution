@@ -15,18 +15,18 @@ class ComputeMetrics:
     Compute metrics class for classification and instruction-tuning methods for 
     CHATTER & PERSONET datasets
     """
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-        self.eval_df = None
-        self.dataset = None
 
-    def _compute_metrics(self) -> Dict[str, float]:
+    def __call__(
+            self,
+            dataset_name: str,
+            eval_df: pd.DataFrame) -> Dict[str, float]:
         """
         Compute metrics for different datasets
         """
-        if self.dataset == "chatter-contexts" or self.dataset == "chatter-segments":
+        if (dataset_name == "chatter-contexts"
+                or dataset_name == "chatter-segments"):
             true_arr, pred_arr = [], []
-            for _, sample_df in self.eval_df.groupby("key"):
+            for _, sample_df in eval_df.groupby("key"):
                 nonnan_sample_df = sample_df.dropna(subset="pred")
                 if len(nonnan_sample_df) > 0:
                     true = nonnan_sample_df["label"].values[0]
@@ -47,70 +47,15 @@ class ComputeMetrics:
                 "precision": prec,
                 "recall": rec,
                 "f1": f1,
-                "total_nsamples": len(self.eval_df["key"].unique()),
+                "total_nsamples": len(eval_df["key"].unique()),
                 "eval_nsamples": len(true_arr)}
         else:
-            n_correct = (self.eval_df["label"] == self.eval_df["pred"]).sum()
-            n_eval = self.eval_df["pred"].notna().sum()
-            n_total = len(self.eval_df)
+            n_correct = (eval_df["label"] == eval_df["pred"]).sum()
+            n_eval = eval_df["pred"].notna().sum()
+            n_total = len(eval_df)
             acc = n_correct/n_eval
             metrics = {
                 "accuracy": acc,
                 "total_nsamples": n_total,
                 "eval_nsamples": n_eval}
         return metrics
-
-    def compute_sft_metrics(self, evalprediction: EvalPrediction) -> Dict[str, float]:
-        """
-        Compute metrics for the supervized fine-tuning method
-        """
-
-        # function to codify label text
-        def convert_label_text_to_label(row):
-            if (self.dataset == "chatter-contexts"
-                    or self.dataset == "chatter-segments"):
-                mobj = re.search(r"\w+", row["pred-text"])
-                if mobj is not None:
-                    label_text = mobj.group(0)
-                    if label_text == "yes":
-                        return 1
-                    elif label_text == "no":
-                        return 0
-            else:
-                traits = [row[f"attribute-{i + 1}"]
-                            for i in range(data.NCLASSES)]
-                for word in row["pred-text"].split():
-                    if word in traits:
-                        return word
-            return np.nan
-
-        label_ids = evalprediction.label_ids
-        prediction_ids = evalprediction.predictions
-        prediction_texts = []
-        for sample_label_ids, sample_prediction_ids in zip(
-                label_ids, prediction_ids):
-            i = np.nonzero(sample_label_ids != data.IGNORE_INDEX)[0][0]
-            sample_completion_ids = sample_prediction_ids[i - 1:]
-            sample_completion_ids = sample_completion_ids[
-                sample_completion_ids != data.IGNORE_INDEX]
-            sample_prediction_text = self.tokenizer.decode(
-                sample_completion_ids, skip_special_tokens=True).lower()
-            prediction_texts.append(sample_prediction_text)
-        self.eval_df["pred-text"] = prediction_texts
-        self.eval_df["pred"] = self.eval_df.apply(
-            convert_label_text_to_label, axis=1)
-        return self._compute_metrics()
-
-    def compute_crm_metrics(self, evalprediction: EvalPrediction) -> Dict[str, float]:
-        """Compute metrics for the character representations model"""
-        logits = evalprediction.predictions
-        probs = scipy.special.softmax(logits, axis=-1)
-        if self.multiclass:
-            self.eval_df["pred"] = np.argmax(probs, axis=-1)
-            self.eval_df = pd.concat((self.eval_df,
-                                      pd.DataFrame(probs, columns=[f"prob{i + 1}" for i in range(probs.shape[1])])),
-                                      axis=1)
-        else:
-            self.eval_df["pred"] = np.argmax(probs, axis=-1)
-            self.eval_df["prob"] = np.max(probs, axis=-1)
-        return self._compute_metrics()

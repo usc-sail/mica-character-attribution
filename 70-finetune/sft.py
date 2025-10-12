@@ -6,6 +6,7 @@ import utils
 from absl import flags
 from absl import logging
 from accelerate import PartialState
+from accelerate.utils import gather_object
 import json
 import jsonlines
 import math
@@ -20,7 +21,6 @@ import torch
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers import BitsAndBytesConfig
-from transformers import Trainer
 from trl import SFTConfig
 from trl import SFTTrainer
 from trl.trainer.sft_trainer import DataCollatorForLanguageModeling
@@ -42,9 +42,8 @@ def train(
         experiments_dir: str,
         train_data: List[Dict[str, Union[str, int]]],
         dev_data: List[Dict[str, Union[str, int]]],
-        chatter_test_data: List[Dict[str, Union[str, int]]],
-        personet_test_data: List[Dict[str, Union[str, int]]],
-        train_and_dev_dataset_name: Literal["chatter-contexts", "personet"] = "chatter-contexts"):
+        train_and_dev_dataset_name: 
+            Literal["chatter-contexts", "personet"] = "chatter-contexts"):
     """
     Supervized fine-tuning training
     """
@@ -110,32 +109,18 @@ def train(
         chatter_contexts_size_in_words=int(FLAGS.chatter_size),
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
-    dev_dataset, dev_df = data.create_sft_dataset(
+    dev_dataset, _ = data.create_sft_dataset(
         data=dev_data,
         tokenizer=tokenizer,
         dataset_name=train_and_dev_dataset_name,
         chatter_contexts_size_in_words=int(FLAGS.chatter_size),
         tokenization_batch_size=FLAGS.tokenization_batch_size,
         disable_progress_bar=not partial_state.is_local_main_process)
-    chatter_test_dataset, chatter_test_df = data.create_sft_dataset(
-        data=chatter_test_data,
-        tokenizer=tokenizer,
-        dataset_name="chatter-contexts",
-        chatter_contexts_size_in_words=int(FLAGS.chatter_size),
-        tokenization_batch_size=FLAGS.tokenization_batch_size,
-        disable_progress_bar=not partial_state.is_local_main_process)
-    personet_test_dataset, personet_test_df = data.create_sft_dataset(
-        data=personet_test_data,
-        tokenizer=tokenizer,
-        dataset_name="personet",
-        tokenization_batch_size=FLAGS.tokenization_batch_size,
-        disable_progress_bar=not partial_state.is_local_main_process)
     
     # log size of sequences
+    log("counting tokens")
     train_ntokens = list(map(len, train_dataset["input_ids"]))
     dev_ntokens = list(map(len, dev_dataset["input_ids"]))
-    chatter_test_ntokens = list(map(len, chatter_test_dataset["input_ids"]))
-    personet_test_ntokens = list(map(len, personet_test_dataset["input_ids"]))
     if partial_state.is_local_main_process:
         logging.info("\ntokens/sample:")
         logging.info(
@@ -148,16 +133,6 @@ def train(
             f"max = {max(dev_ntokens)}, "
             f"min = {min(dev_ntokens)}, "
             f"95%tile = {np.quantile(dev_ntokens, 0.95):.1f}")
-        logging.info(
-            "chatter test: "
-            f"max = {max(chatter_test_ntokens)}, "
-            f"min = {min(chatter_test_ntokens)}, "
-            f"95%tile = {np.quantile(chatter_test_ntokens, 0.95):.1f}")
-        logging.info(
-            "personet test: "
-            f"max = {max(personet_test_ntokens)}, "
-            f"min = {min(personet_test_ntokens)}, "
-            f"95%tile = {np.quantile(personet_test_ntokens, 0.95):.1f}\n")
 
     sft_config = SFTConfig(
         output_dir=experiments_dir,
@@ -186,11 +161,6 @@ def train(
         gradient_checkpointing_kwargs={"use_reentrant": True},
         save_strategy="no")
 
-    # create compute metrics instance
-    compute_metrics = evaluate.ComputeMetrics(tokenizer)
-    compute_metrics.eval_df = dev_df
-    compute_metrics.dataset = FLAGS.train_dataset
-
     # set up the logger callback
     if partial_state.is_local_main_process:
         callbacks = [utils.LoggerCallback(experiments_dir)]
@@ -208,8 +178,6 @@ def train(
         eval_dataset=dev_dataset,
         processing_class=tokenizer,
         peft_config=lora_config,
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-        compute_metrics=compute_metrics.compute_sft_metrics,
         callbacks=callbacks)
     
 
@@ -220,37 +188,12 @@ def train(
     log("=" * 80)
     log("training done")
 
-    # release training memory
-    utils.release_training_memory(trainer)
-
     # plot train loss, dev loss, and dev metric
     log("plotting")
     if partial_state.is_local_main_process:
         with jsonlines.open(callbacks[0].logs_file) as reader:
             logs = list(reader)
         utils.plot_logs(logs, "eval_accuracy", experiments_dir)
-
-    # predict and evaluate
-    datasets = [dev_dataset, chatter_test_dataset, personet_test_dataset]
-    dfs = [dev_df, chatter_test_df, personet_test_df]
-    dataset_names = [train_and_dev_dataset_name, "chatter-contexts", "personet"]
-    partitions = ["dev", "test", "test"]
-    for dataset, df, name, partition in zip(
-            datasets, dfs, dataset_names, partitions):
-        log(f"evaluating {name} {partition}")
-        compute_metrics.eval_df = df
-        compute_metrics.dataset = name
-        metrics = trainer.predict(dataset).metrics
-        log(f"{metrics}\n\n")
-        if partial_state.is_local_main_process:
-            predictions_file = os.path.join(
-                experiments_dir,
-                f"{name}-{partition}.csv")
-            metrics_file = os.path.join(
-                experiments_dir,
-                f"{name}-{partition}.json")
-            df.to_csv(predictions_file, index=False)
-            json.dump(metrics, open(metrics_file, "w"))
 
     # save model
     if FLAGS.save_model:
@@ -313,7 +256,8 @@ def predict(
         matched_dataset_name = re.match(
             "(chatter-contexts)|(chatter-segments)|(personet)",
             dataset_name).group(0)
-        size = int(dataset_name.split("-")[4]) if matched_dataset_name == "chatter-contexts" else 2000
+        size = (int(dataset_name.split("-")[4])
+                if matched_dataset_name == "chatter-contexts" else 2000)
         dataset, df = data.create_sft_dataset(
             data=datalist,
             tokenizer=tokenizer,
@@ -323,87 +267,121 @@ def predict(
             disable_progress_bar=not partial_state.is_local_main_process)
         dataset_name_to_dataset_and_df[dataset_name] = (dataset, df)
 
+    # Create Compute Metrics instance
+    compute_metrics = evaluate.ComputeMetrics()
+
+    # Create predictions directory
+    predictions_dir = os.path.join(FLAGS.modelpath, "predictions")
+    if partial_state.is_local_main_process:
+        os.makedirs(predictions_dir, exist_ok=True)
+
+    # Loop over each dataset and generate
     for dataset_name, (dataset, df) in dataset_name_to_dataset_and_df.items():
         log(f"evaluating {dataset_name}")
         matched_dataset_name = re.match(
             "(chatter-contexts)|(chatter-segments)|(personet)",
             dataset_name).group(0)
+
+        # Split the dataset between the GPUs
+        partial_state.wait_for_everyone()
         with partial_state.split_between_processes(
                 dataset, apply_padding=True) as process_dataset:
+
+            # Split the per-GPU dataset into batches
             n_batches = math.ceil(
                 len(process_dataset)/FLAGS.prediction_batch_size)
+
+            # Collect the per-GPU responses
             process_responses = []
+
+            # Loop over each batch
             for i in range(n_batches):
+
+                # Pad the batch to the longest sequence in the batch
                 batch_dataset = process_dataset[
                     i * FLAGS.prediction_batch_size:
                     (i + 1) * FLAGS.prediction_batch_size]
                 batch_input_ids = batch_dataset["input_ids"]
                 maxlen = max(map(len, batch_input_ids))
                 padded_batch_input_ids = []
-                
-                batch_encoding = (self
-                                    .tokenizer(batch_prompts,
-                                                padding="max_length" if FLAGS.max_input_tokens is not None else "longest",
-                                                truncation=FLAGS.max_input_tokens is not None,
-                                                return_tensors="pt",
-                                                max_length=((1 << 10) * FLAGS.max_input_tokens 
-                                                            if FLAGS.max_input_tokens is not None else None))
-                                    .to(self.partial_state.device))
-                batch_output = self.model.generate(**batch_encoding,
-                                                    do_sample=FLAGS.do_sample,
-                                                    top_k=FLAGS.top_k,
-                                                    top_p=FLAGS.top_p,
-                                                    temperature=FLAGS.temperature,
-                                                    max_new_tokens=FLAGS.max_output_tokens,
-                                                    pad_token_id=self.tokenizer.pad_token_id,
-                                                    return_legacy_cache=True)
-                batch_output = batch_output[:, batch_encoding["input_ids"].shape[1]:]
-                batch_responses = self.tokenizer.batch_decode(batch_output, skip_special_tokens=True)
+                for input_ids in batch_input_ids:
+                    padded_input_ids = (
+                        [tokenizer.pad_token_id] * (maxlen - len(input_ids))
+                        + input_ids)
+                    padded_batch_input_ids.append(padded_input_ids)
+
+                # Convert to torch tensor and move to GPU
+                padded_batch_input_ids = (
+                    torch.tensor(padded_batch_input_ids)
+                    .to(partial_state.device))
+
+                # Generate response
+                batch_output_ids = model.generate(
+                    padded_batch_input_ids,
+                    do_sample=FLAGS.do_sample,
+                    top_k=FLAGS.top_k,
+                    top_p=FLAGS.top_p,
+                    temperature=FLAGS.temperature,
+                    max_new_tokens=FLAGS.max_output_tokens,
+                    pad_token_id=tokenizer.pad_token_id,
+                    return_legacy_cache=True)
+
+                # Keep the generated output ids
+                batch_output_ids = batch_output_ids[
+                    :, padded_batch_input_ids.shape[1]:]
+
+                # Decode the generated output ids
+                batch_responses = tokenizer.batch_decode(
+                    batch_output_ids, skip_special_tokens=True)
+                batch_responses = [response.strip().lower()
+                                   for response in batch_responses]
+
+                # Collect the per-GPU responses
                 process_responses.extend(batch_responses)
-                print(f"PROCESS {self.partial_state.process_index}: Batch {i + 1} / {n_batches} done")
-                self.partial_state.wait_for_everyone()
+                logging.info(
+                    f"PROCESS {partial_state.process_index}: "
+                    f"Batch {i + 1} / {n_batches} done")
+                partial_state.wait_for_everyone()
             responses = [process_responses]
+
+        # Gather per-GPU responses
         responses_arr = gather_object(responses)
-        responses = [response for responses in responses_arr for response in responses]
-        responses = responses[:len(prompts)]
-        return responses
+        responses = [
+            response for responses in responses_arr for response in responses]
+        df["pred-text"] = responses[:len(dataset)]
 
-    # instantiate trainer; only used for prediction here
-    log("instantiating trainer")
-    predictions_dir = os.path.join(FLAGS.modelpath, "predictions")
-    os.makedirs(predictions_dir, exist_ok=True)
-    sft_config = SFTConfig(
-        output_dir=predictions_dir,
-        per_device_eval_batch_size=FLAGS.prediction_batch_size,
-        bf16=FLAGS.bf16,
-        fp16=not FLAGS.bf16)
-    compute_metrics = evaluate.ComputeMetrics(tokenizer)
-    dummy_train_dataset = list(dataset_name_to_dataset_and_df.values())[0][0]
-    trainer = Trainer(
-        model=model,
-        args=sft_config,
-        data_collator=DataCollatorForLanguageModeling(
-            pad_token_id=tokenizer.pad_token_id),
-        train_dataset=dummy_train_dataset,
-        processing_class=tokenizer,
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-        compute_metrics=compute_metrics.compute_sft_metrics)
+        # Convert label text to label
+        preds = []
+        for _, row in df.iterrows():
+            pred = np.nan
+            if (matched_dataset_name == "chatter-contexts"
+                    or matched_dataset_name == "chatter-segments"):
+                mobj = re.search(r"\w+", row["pred-text"])
+                if mobj is not None:
+                    if mobj.group(0) == "yes":
+                        pred = 1
+                    elif mobj.group(0) == "no":
+                        pred = 0
+            else:
+                traits = [row[f"attribute-{i + 1}"]
+                          for i in range(data.NCLASSES)]
+                for trait in traits:
+                    if trait in row["pred-text"]:
+                        pred = trait
+            preds.append(pred)
+        df["pred"] = preds
 
-    # predict over datasets
-    for dataset_name, (dataset, df) in dataset_name_to_dataset_and_df.items():
-        log(f"evaluating {dataset_name}")
-        matched_dataset_name = re.match(
-            "(chatter-contexts)|(chatter-segments)|(personet)", dataset_name).group(0)
-        compute_metrics.eval_df = df
-        compute_metrics.dataset = matched_dataset_name
-        metrics = trainer.predict(dataset).metrics
-        log(f"{metrics}\n\n")
+        # Compute metrics
+        metrics = compute_metrics(matched_dataset_name, df)
+
+        # Print and save metrics
+        log(f"{dataset_name}\n{metrics}\n")
         if partial_state.is_local_main_process:
             predictions_file = os.path.join(
-                FLAGS.modelpath,
-                f"predictions/{dataset_name}.csv")
+                predictions_dir,
+                f"{dataset_name}.csv")
             metrics_file = os.path.join(
-                FLAGS.modelpath,
-                f"predictions/{dataset_name}.json")
+                predictions_dir,
+                f"{dataset_name}.json")
             df.to_csv(predictions_file, index=False)
             json.dump(metrics, open(metrics_file, "w"))

@@ -286,16 +286,12 @@ def train(_):
                   experiments_dir=experiments_dir,
                   train_data=train_data,
                   dev_data=dev_data,
-                  chatter_test_data=chatter_test_data,
-                  personet_test_data=personet_test_data,
                   train_and_dev_dataset_name=FLAGS.train_dataset)
     else:
         crm.train(partial_state=PARTIALSTATE,
                   experiments_dir=experiments_dir,
                   train_data=train_data,
                   dev_data=dev_data,
-                  chatter_test_data=chatter_test_data,
-                  personet_test_data=personet_test_data,
                   train_and_dev_dataset_name=FLAGS.train_dataset)
 
 if __name__ == '__main__':
