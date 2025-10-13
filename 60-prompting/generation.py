@@ -232,7 +232,6 @@ class HF:
                 messages = [[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
                             for prompt in prompts]
             prompts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-        self.partial_state.wait_for_everyone()
         with self.partial_state.split_between_processes(prompts, apply_padding=True) as process_prompts:
             n_batches = math.ceil(len(process_prompts)/FLAGS.batch_size)
             process_responses = []
@@ -258,7 +257,6 @@ class HF:
                 batch_responses = self.tokenizer.batch_decode(batch_output, skip_special_tokens=True)
                 process_responses.extend(batch_responses)
                 print(f"PROCESS {self.partial_state.process_index}: Batch {i + 1} / {n_batches} done")
-                self.partial_state.wait_for_everyone()
             responses = [process_responses]
         responses_arr = gather_object(responses)
         responses = [response for responses in responses_arr for response in responses]

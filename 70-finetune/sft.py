@@ -188,18 +188,18 @@ def train(
     log("=" * 80)
     log("training done")
 
-    # plot train loss, dev loss, and dev metric
-    log("plotting")
-    if partial_state.is_local_main_process:
-        with jsonlines.open(callbacks[0].logs_file) as reader:
-            logs = list(reader)
-        utils.plot_logs(logs, "eval_accuracy", experiments_dir)
-
     # save model
     if FLAGS.save_model:
         partial_state.wait_for_everyone()
         log("saving model")
         trainer.save_model(experiments_dir)
+
+    # plot train loss and dev loss, and dev metric
+    log("plotting")
+    if partial_state.is_local_main_process:
+        with jsonlines.open(callbacks[0].logs_file) as reader:
+            logs = list(reader)
+        utils.plot_logs(logs, "eval_mean_token_accuracy", experiments_dir)
 
 def predict(
         partial_state: PartialState,
@@ -261,6 +261,7 @@ def predict(
         dataset, df = data.create_sft_dataset(
             data=datalist,
             tokenizer=tokenizer,
+            only_prompt=True,
             dataset_name=matched_dataset_name,
             chatter_contexts_size_in_words=size,
             tokenization_batch_size=FLAGS.tokenization_batch_size,
@@ -275,21 +276,31 @@ def predict(
     if partial_state.is_local_main_process:
         os.makedirs(predictions_dir, exist_ok=True)
 
+    # Sort dataset names so all processes see the same order
+    dataset_names = sorted(list(dataset_name_to_dataset_and_df.keys()))
+
     # Loop over each dataset and generate
-    for dataset_name, (dataset, df) in dataset_name_to_dataset_and_df.items():
+    for dataset_name in dataset_names:
+        dataset, df = dataset_name_to_dataset_and_df[dataset_name]
         log(f"evaluating {dataset_name}")
         matched_dataset_name = re.match(
             "(chatter-contexts)|(chatter-segments)|(personet)",
             dataset_name).group(0)
+        log(f"{len(dataset)} samples")
+
+        partial_state.wait_for_everyone()
 
         # Split the dataset between the GPUs
-        partial_state.wait_for_everyone()
+        input_ids = dataset["input_ids"]
         with partial_state.split_between_processes(
-                dataset, apply_padding=True) as process_dataset:
+                input_ids) as process_input_ids:
+            logging.info(
+                f"PROCESS {partial_state.process_index}: "
+                f"{len(process_input_ids)} samples")
 
             # Split the per-GPU dataset into batches
             n_batches = math.ceil(
-                len(process_dataset)/FLAGS.prediction_batch_size)
+                len(process_input_ids)/FLAGS.prediction_batch_size)
 
             # Collect the per-GPU responses
             process_responses = []
@@ -298,26 +309,32 @@ def predict(
             for i in range(n_batches):
 
                 # Pad the batch to the longest sequence in the batch
-                batch_dataset = process_dataset[
+                batch_input_ids = process_input_ids[
                     i * FLAGS.prediction_batch_size:
                     (i + 1) * FLAGS.prediction_batch_size]
-                batch_input_ids = batch_dataset["input_ids"]
                 maxlen = max(map(len, batch_input_ids))
                 padded_batch_input_ids = []
+                batch_attention_mask = []
                 for input_ids in batch_input_ids:
                     padded_input_ids = (
                         [tokenizer.pad_token_id] * (maxlen - len(input_ids))
                         + input_ids)
+                    attention_mask = (
+                        [0] * (maxlen - len(input_ids)) + [1] * len(input_ids))
                     padded_batch_input_ids.append(padded_input_ids)
+                    batch_attention_mask.append(attention_mask)
 
                 # Convert to torch tensor and move to GPU
                 padded_batch_input_ids = (
                     torch.tensor(padded_batch_input_ids)
                     .to(partial_state.device))
+                batch_attention_mask = (
+                    torch.tensor(batch_attention_mask).to(partial_state.device))
 
                 # Generate response
                 batch_output_ids = model.generate(
-                    padded_batch_input_ids,
+                    input_ids=padded_batch_input_ids,
+                    attention_mask=batch_attention_mask,
                     do_sample=FLAGS.do_sample,
                     top_k=FLAGS.top_k,
                     top_p=FLAGS.top_p,
@@ -334,14 +351,15 @@ def predict(
                 batch_responses = tokenizer.batch_decode(
                     batch_output_ids, skip_special_tokens=True)
                 batch_responses = [response.strip().lower()
-                                   for response in batch_responses]
+                                    for response in batch_responses]
 
                 # Collect the per-GPU responses
-                process_responses.extend(batch_responses)
+                process_responses += batch_responses
                 logging.info(
                     f"PROCESS {partial_state.process_index}: "
                     f"Batch {i + 1} / {n_batches} done")
-                partial_state.wait_for_everyone()
+
+            # Contain in list for gather
             responses = [process_responses]
 
         # Gather per-GPU responses
@@ -385,3 +403,6 @@ def predict(
                 f"{dataset_name}.json")
             df.to_csv(predictions_file, index=False)
             json.dump(metrics, open(metrics_file, "w"))
+
+        # Wait for each process to complete dataset operations
+        partial_state.wait_for_everyone()

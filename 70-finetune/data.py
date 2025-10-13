@@ -267,6 +267,7 @@ def load_personet():
 def create_sft_dataset(
         data: List[Dict[str, Union[str, int]]],
         tokenizer: AutoTokenizer,
+        only_prompt = False,
         dataset_name: Literal[
             "chatter-contexts",
             "chatter-segments",
@@ -368,6 +369,8 @@ def create_sft_dataset(
             total=len(prompt_ids),
             desc=f"{dataset_name} truncation",
             disable=disable_progress_bar):
+        if only_prompt:
+            sample_completion_ids = []
         if len(sample_prompt_ids) > maxlen - len(sample_completion_ids):
             sample_prompt_ids = sample_prompt_ids[
                 : maxlen - len(sample_completion_ids)]

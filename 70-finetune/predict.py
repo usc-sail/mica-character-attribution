@@ -7,6 +7,7 @@ from absl import app
 from absl import flags
 from accelerate import PartialState
 import collections
+import torch
 
 # Dataset arguments
 flags.DEFINE_multi_enum(
@@ -68,6 +69,7 @@ flags.DEFINE_float("temperature", default=1, help="temperature for generations")
 
 FLAGS = flags.FLAGS
 PARTIALSTATE = PartialState()
+torch.cuda.set_device(PARTIALSTATE.local_process_index)
 
 def predict(_):
     """Run inference using trained LLMs on datasets for character attribution"""

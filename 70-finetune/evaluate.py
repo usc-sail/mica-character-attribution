@@ -51,7 +51,7 @@ class ComputeMetrics:
                 "eval_nsamples": len(true_arr)}
         else:
             n_correct = (eval_df["label"] == eval_df["pred"]).sum()
-            n_eval = eval_df["pred"].notna().sum()
+            n_eval = int(eval_df["pred"].notna().sum())
             n_total = len(eval_df)
             acc = n_correct/n_eval
             metrics = {

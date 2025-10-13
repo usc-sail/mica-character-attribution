@@ -134,6 +134,7 @@ flags.DEFINE_bool(
 
 FLAGS = flags.FLAGS
 PARTIALSTATE = PartialState()
+torch.cuda.set_device(PARTIALSTATE.local_process_index)
 
 # set seeds
 random.seed(2025)
