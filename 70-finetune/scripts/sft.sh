@@ -21,11 +21,11 @@ train.py \
 --gradient_accumulation_steps 2 \
 --gradient_checkpointing \
 --eval_batch_size 4 \
---eval \
+--noeval \
 --eval_delay 0 \
---eval_on_start \
+--noeval_on_start \
 --eval_steps 32 \
---logging_steps 16 \ 
+--logging_steps 32 \ 
 --save_model \
 --alsologtostderr \
 --noshowprefixforinfo"
@@ -37,24 +37,25 @@ predict.py \
 --model sft \
 --modelname meta-llama/Llama-3.1-8B-Instruct \
 --load_4bit \
---attn flash_attention_2
+--attn flash_attention_2 \
+--noshowprefixforinfo
 "
 
 if [[ "$1" == "train" ]]; then
 
-    # # train on chatter-contexts-semantic
-    # $TRAIN \
-    # --train_dataset chatter-contexts \
-    # --chatter_truncation_strategy semantic \
-    # --chatter_size 2000 \
-    # --train_steps 1024
+    # train on chatter-contexts-semantic
+    $TRAIN \
+    --train_dataset chatter-contexts \
+    --chatter_truncation_strategy semantic \
+    --chatter_size 2000 \
+    --train_steps 1024
 
-    # # train on chatter-contexts-first
-    # $TRAIN \
-    # --train_dataset chatter-contexts \
-    # --chatter_truncation_strategy first \
-    # --chatter_size 2000 \
-    # --train_steps 1024
+    # train on chatter-contexts-first
+    $TRAIN \
+    --train_dataset chatter-contexts \
+    --chatter_truncation_strategy first \
+    --chatter_size 2000 \
+    --train_steps 1024
 
     # train on personet
     $TRAIN \
@@ -68,7 +69,7 @@ else
     --dataset chatter-segments-anonymized-test \
     --dataset chatter-segments-original-test \
     --modelpath $1 \
-    --prediction_batch_size 1 \
+    --prediction_batch_size 4 \
     --max_output_tokens 5
 
     # predict on chatter-contexts & personet
@@ -80,7 +81,7 @@ else
     --dataset personet-dev \
     --dataset personet-test \
     --modelpath $1 \
-    --prediction_batch_size 4 \
+    --prediction_batch_size 16 \
     --max_output_tokens 10
 
 fi
