@@ -50,6 +50,16 @@ flags.DEFINE_string(
     default="meta-llama/Llama-3.1-8B-Instruct",
     help="huggingface model name")
 
+# crm alpha argument
+flags.DEFINE_float(
+    "alpha",
+    default=0.5,
+    lower_bound=0,
+    upper_bound=1,
+    help=(
+        "weight given to character representation in linear combination "
+        "with document representation"))
+
 # peft arguments
 flags.DEFINE_bool(
     "bf16",
@@ -147,11 +157,12 @@ def log(message):
     if PARTIALSTATE.is_local_main_process:
         logging.info(message)
 
-def get_experiments_directory():
-    # decide experiments directory
+def get_experiments_and_attributes_directory():
+    # decide experiments and attributes directory
     model_dir = FLAGS.model
     if FLAGS.train_dataset == "chatter-contexts":
-        train_part = f"chatter-{FLAGS.chatter_truncation_strategy}-{FLAGS.chatter_size}"
+        train_part = (
+            f"chatter-{FLAGS.chatter_truncation_strategy}-{FLAGS.chatter_size}")
     else:
         train_part = "personet"
     modelname_part = FLAGS.modelname.split("/")[-1]
@@ -167,7 +178,9 @@ def get_experiments_directory():
     filename = f"{train_part}--{modelname_part}--{datetime_part}"
     experiments_dir = os.path.join(
         data.DATADIR, "70-finetune", model_dir, filename)
-    return experiments_dir
+    attributes_dir = os.path.join(
+        data.DATADIR, "70-finetune", model_dir, f"{modelname_part}--attributes")
+    return experiments_dir, attributes_dir
 
 def log_arguments():
     logging.info("ARGUMENTS")
@@ -233,7 +246,7 @@ def train(_):
     character attribution task
     """
     # get and create experiments directory
-    experiments_dir = get_experiments_directory()
+    experiments_dir, attributes_dir = get_experiments_and_attributes_directory()
     if PARTIALSTATE.is_local_main_process:
         os.makedirs(experiments_dir, exist_ok=True)
     PARTIALSTATE.wait_for_everyone()
@@ -265,6 +278,17 @@ def train(_):
     personet_test_data = list(
         filter(lambda obj: obj["partition"] == "test", personet_data))
 
+    # find tropes and traits
+    trope_to_definition = {}
+    traits = set()
+    for obj in chatter_data:
+        trope_to_definition[obj["attribute"]] = obj["attribute-definition"]
+    for obj in personet_data:
+        traits.update(obj["attributes"])
+    tropes = sorted(list(trope_to_definition.keys()))
+    trope_definitions = [trope_to_definition[trope] for trope in tropes]
+    traits = sorted(traits)
+
     # log data sizes
     if PARTIALSTATE.is_local_main_process:
         logging.info(f"{len(chatter_train_data)} CHATTER train examples")
@@ -291,8 +315,12 @@ def train(_):
     else:
         crm.train(partial_state=PARTIALSTATE,
                   experiments_dir=experiments_dir,
+                  attributes_dir=attributes_dir,
                   train_data=train_data,
                   dev_data=dev_data,
+                  tropes=tropes,
+                  trope_definitions=trope_definitions,
+                  traits=traits,
                   train_and_dev_dataset_name=FLAGS.train_dataset)
 
 if __name__ == '__main__':
